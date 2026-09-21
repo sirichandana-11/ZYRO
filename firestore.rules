@@ -1,0 +1,65 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isRider() {
+      return isAuthenticated() && (getUserData().role == 'rider' || !exists(/databases/$(database)/documents/users/$(request.auth.uid)));
+    }
+
+    function isDriver() {
+      return isAuthenticated() && getUserData().role == 'driver';
+    }
+
+    // 1. Users collection: authoritative role and user metadata (Role is immutable on update)
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId) && (!('role' in request.resource.data) || request.resource.data.role == resource.data.role);
+      allow delete: if false;
+    }
+
+    // 2. Drivers collection: driver profiles, live GPS, availability
+    match /drivers/{driverId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(driverId);
+    }
+
+    // 3. Rides collection: high-speed 120s ride allocation
+    match /rides/{rideId} {
+      // Any authenticated user can read ride states (riders and eligible drivers)
+      allow read: if isAuthenticated();
+
+      // Riders can create a searching ride with their own riderId
+      allow create: if isAuthenticated() && (request.resource.data.riderId == request.auth.uid || request.resource.data.riderId.size() > 0);
+
+      // Updating rides:
+      // 1. Rider can cancel their own ride
+      // 2. Driver can accept ride via atomic transaction setting driverId to their authenticated UID
+      // 3. Driver can complete their assigned ride
+      // 4. Timeout transaction transitions searching -> driver_assigned (backup) or no_driver
+      allow update: if isAuthenticated() && (
+        // Rider cancelling their own ride
+        (resource.data.riderId == request.auth.uid && request.resource.data.status == 'cancelled') ||
+        // Driver accepting or updating their active assignment
+        (request.resource.data.driverId == request.auth.uid || resource.data.driverId == request.auth.uid) ||
+        // 120-second timeout transition for searching ride
+        (resource.data.status == 'searching' && request.resource.data.status in ['driver_assigned', 'no_driver'])
+      );
+
+      allow delete: if false;
+    }
+  }
+}

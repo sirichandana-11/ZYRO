@@ -1,0 +1,17 @@
+{
+  "name": "zyro-load-tests",
+  "version": "1.0.0",
+  "description": "Concurrency fuzzers and high-scale load simulation for ZYRO",
+  "main": "load_simulator.js",
+  "scripts": {
+    "test:concurrency": "node concurrency_fuzzer.js",
+    "test:load": "node load_simulator.js"
+  },
+  "keywords": [
+    "zyro",
+    "load-testing",
+    "concurrency-fuzzer"
+  ],
+  "author": "ZYRO QA & Scalability Engineering",
+  "license": "ISC"
+}

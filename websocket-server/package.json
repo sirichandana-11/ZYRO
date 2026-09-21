@@ -1,0 +1,20 @@
+{
+  "name": "zyro-websocket-server",
+  "version": "1.0.0",
+  "description": "ZYRO Real-Time WebSocket Communication Server",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node test/websocket_test.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "ws": "^8.18.0",
+    "dotenv": "^16.4.7"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "private": true
+}

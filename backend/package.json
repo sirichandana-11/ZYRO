@@ -1,0 +1,22 @@
+{
+  "name": "zyro-backend-services",
+  "version": "1.0.0",
+  "description": "Stateless backend microservices and domain engines for ZYRO",
+  "main": "src/index.js",
+  "scripts": {
+    "test": "node test/backend_test.js",
+    "start": "node src/index.js"
+  },
+  "keywords": [
+    "zyro",
+    "ride-hailing",
+    "geospatial",
+    "state-machine"
+  ],
+  "author": "ZYRO Engineering",
+  "license": "ISC",
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "dotenv": "^16.4.7"
+  }
+}
