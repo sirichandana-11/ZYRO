@@ -7,6 +7,7 @@ import 'screens/driver_dashboard_screen.dart';
 import 'screens/login_screen.dart';
 import 'screens/main_navigation_screen.dart';
 import 'services/auth_service.dart';
+import 'services/preferences_service.dart';
 import 'theme/zyro_theme.dart';
 
 void main() async {
@@ -37,11 +38,18 @@ class ZyroApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'ZYRO - Your Ride, Without the Wait',
-      debugShowCheckedModeBanner: false,
-      theme: ZyroTheme.lightTheme,
-      home: const AuthGate(),
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: PreferencesService.themeModeNotifier,
+      builder: (context, currentThemeMode, _) {
+        return MaterialApp(
+          title: 'ZYRO - Your Ride, Without the Wait',
+          debugShowCheckedModeBanner: false,
+          theme: ZyroTheme.lightTheme,
+          darkTheme: ZyroTheme.darkTheme,
+          themeMode: currentThemeMode,
+          home: const AuthGate(),
+        );
+      },
     );
   }
 }
@@ -51,20 +59,26 @@ class ZyroApp extends StatelessWidget {
 /// Directs users strictly according to their authoritative Firestore role:
 /// - role == "driver" -> DriverDashboardScreen
 /// - role == "rider"  -> MainNavigationScreen (Rider Home)
-class AuthGate extends StatelessWidget {
+class AuthGate extends StatefulWidget {
   const AuthGate({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final authService = AuthService();
+  State<AuthGate> createState() => _AuthGateState();
+}
 
+class _AuthGateState extends State<AuthGate> {
+  final AuthService _authService = AuthService();
+  final PreferencesService _prefsService = PreferencesService();
+  String? _initializedUid;
+
+  @override
+  Widget build(BuildContext context) {
     return StreamBuilder<User?>(
-      stream: authService.authStateChanges,
+      stream: _authService.authStateChanges,
       builder: (context, snapshot) {
         // While Firebase is checking auth state
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Scaffold(
-            backgroundColor: ZyroTheme.backgroundLight,
             body: Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -109,12 +123,17 @@ class AuthGate extends StatelessWidget {
         // User is logged in: resolve authoritative role from users/{uid}
         if (snapshot.hasData && snapshot.data != null) {
           final user = snapshot.data!;
+
+          if (_initializedUid != user.uid) {
+            _initializedUid = user.uid;
+            _prefsService.initThemeMode(user.uid);
+          }
+
           return FutureBuilder<String>(
-            future: authService.getUserRole(user.uid),
+            future: _authService.getUserRole(user.uid),
             builder: (context, roleSnapshot) {
               if (roleSnapshot.connectionState == ConnectionState.waiting) {
                 return const Scaffold(
-                  backgroundColor: ZyroTheme.backgroundLight,
                   body: Center(
                     child: SizedBox(
                       width: 28,

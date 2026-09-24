@@ -16,7 +16,13 @@ class ZyroBottomNavBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: ZyroTheme.cardBg(context),
+        border: Border(
+          top: BorderSide(
+            color: ZyroTheme.borderColor(context),
+            width: 1,
+          ),
+        ),
         boxShadow: [
           BoxShadow(
             color: ZyroTheme.darkCharcoal.withValues(alpha: 0.08),
@@ -109,7 +115,7 @@ class _NavItem extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           color: isSelected
-              ? ZyroTheme.primarySurface
+              ? ZyroTheme.primarySurfaceAdaptive(context)
               : Colors.transparent,
           borderRadius: BorderRadius.circular(16),
         ),

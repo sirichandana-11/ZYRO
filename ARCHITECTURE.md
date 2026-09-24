@@ -57,9 +57,9 @@ ZYRO is designed as a horizontally scalable, event-driven ride-hailing platform 
 
 ### 2.3. Stateless Backend Domain Services
 - **`RideStateMachine`**: Enforces legal state machine transitions:
-  $$\text{CREATED} \to \text{SEARCHING} \to \text{DRIVER\_ASSIGNED} \to \text{DRIVER\_ARRIVING} \to \text{RIDE\_STARTED} \to \text{COMPLETED}$$
+  $$\text{CREATED} \to \text{SEARCHING} \to \text{DRIVER\_ASSIGNED} \to \text{DRIVER\_ARRIVING} \to \text{DRIVER\_ARRIVED} \to \text{RIDE\_STARTED} \to \text{COMPLETED}$$
   Terminal states (`COMPLETED`, `CANCELLED`, `NO_DRIVER`) are immutable.
-- **`GeospatialMatchingService`**: Evaluates driver eligibility within `MATCHING_RADIUS_KM` (default 10km) using spatial bounding boxes, vehicle compatibility, and a 30s telemetry freshness filter.
+- **`GeospatialMatchingService`**: Evaluates driver eligibility within `MATCHING_RADIUS_KM` (strictly **2.0 KM** for initial broadcast) using spatial bounding boxes, vehicle compatibility, and a 30s telemetry freshness filter.
 - **`TimeoutScheduler`**: Background worker managing the 120-second allocation expiry independent of client widget lifecycles.
 - **`IdempotencyManager`**: Deduplicates mutations via cached response fingerprints with a 24-hour TTL.
 

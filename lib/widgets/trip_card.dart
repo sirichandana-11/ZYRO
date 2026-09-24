@@ -54,7 +54,7 @@ class ActiveTripCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: ZyroTheme.cardBg(context),
         borderRadius: BorderRadius.circular(22),
         border: Border.all(color: ZyroTheme.primaryColor.withValues(alpha: 0.3), width: 1.5),
         boxShadow: [
@@ -76,7 +76,7 @@ class ActiveTripCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
-                  color: ZyroTheme.primarySurface,
+                  color: ZyroTheme.primarySurfaceAdaptive(context),
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: ZyroTheme.primaryLight.withValues(alpha: 0.4)),
                 ),
@@ -128,7 +128,7 @@ class ActiveTripCard extends StatelessWidget {
             children: [
               CircleAvatar(
                 radius: 24,
-                backgroundColor: ZyroTheme.primarySurface,
+                backgroundColor: ZyroTheme.primarySurfaceAdaptive(context),
                 child: const Icon(Icons.person_pin_rounded, color: ZyroTheme.primaryColor, size: 30),
               ),
               const SizedBox(width: 12),
@@ -143,7 +143,7 @@ class ActiveTripCard extends StatelessWidget {
                           style: GoogleFonts.plusJakartaSans(
                             fontSize: 15,
                             fontWeight: FontWeight.w700,
-                            color: ZyroTheme.darkCharcoal,
+                            color: ZyroTheme.textPrimary(context),
                           ),
                         ),
                         const SizedBox(width: 6),
@@ -175,7 +175,7 @@ class ActiveTripCard extends StatelessWidget {
                       '${trip.vehicleType} • ${trip.vehicleNumber ?? "KA 05 EV 2024"}',
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 12.5,
-                        color: ZyroTheme.mutedText,
+                        color: ZyroTheme.textSecondary(context),
                         fontWeight: FontWeight.w500,
                       ),
                     ),
@@ -187,13 +187,13 @@ class ActiveTripCard extends StatelessWidget {
                 style: GoogleFonts.plusJakartaSans(
                   fontSize: 17,
                   fontWeight: FontWeight.w800,
-                  color: ZyroTheme.darkCharcoal,
+                  color: ZyroTheme.textPrimary(context),
                 ),
               ),
             ],
           ),
 
-          const Divider(height: 24, color: ZyroTheme.borderLight),
+          Divider(height: 24, color: ZyroTheme.borderColor(context)),
 
           // Route Points
           _RouteRow(
@@ -202,16 +202,16 @@ class ActiveTripCard extends StatelessWidget {
             title: 'Pickup',
             address: trip.pickup,
           ),
-          const Padding(
-            padding: EdgeInsets.only(left: 11),
+          Padding(
+            padding: const EdgeInsets.only(left: 11),
             child: SizedBox(
               height: 12,
-              child: VerticalDivider(color: ZyroTheme.borderLight, thickness: 1.5),
+              child: VerticalDivider(color: ZyroTheme.borderColor(context), thickness: 1.5),
             ),
           ),
           _RouteRow(
             icon: Icons.location_on_rounded,
-            iconColor: ZyroTheme.darkCharcoal,
+            iconColor: ZyroTheme.textPrimary(context),
             title: 'Drop-off',
             address: trip.destination,
           ),
@@ -265,10 +265,10 @@ class TripHistoryCard extends StatelessWidget {
     return Container(
       margin: const EdgeInsets.only(bottom: 14),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: ZyroTheme.cardBg(context),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: ZyroTheme.borderLight),
-        boxShadow: ZyroTheme.softCardShadow,
+        border: Border.all(color: ZyroTheme.borderColor(context)),
+        boxShadow: ZyroTheme.isDarkMode(context) ? [] : ZyroTheme.softCardShadow,
       ),
       child: Material(
         color: Colors.transparent,
@@ -289,7 +289,7 @@ class TripHistoryCard extends StatelessWidget {
                         Container(
                           padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
-                            color: ZyroTheme.primarySurface,
+                            color: ZyroTheme.primarySurfaceAdaptive(context),
                             borderRadius: BorderRadius.circular(10),
                           ),
                           child: Icon(
@@ -307,14 +307,14 @@ class TripHistoryCard extends StatelessWidget {
                               style: GoogleFonts.plusJakartaSans(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w700,
-                                color: ZyroTheme.darkCharcoal,
+                                color: ZyroTheme.textPrimary(context),
                               ),
                             ),
                             Text(
                               '${trip.date} • ${trip.time}',
                               style: GoogleFonts.plusJakartaSans(
                                 fontSize: 11.5,
-                                color: ZyroTheme.mutedText,
+                                color: ZyroTheme.textSecondary(context),
                               ),
                             ),
                           ],
@@ -329,7 +329,7 @@ class TripHistoryCard extends StatelessWidget {
                           style: GoogleFonts.plusJakartaSans(
                             fontSize: 15,
                             fontWeight: FontWeight.w800,
-                            color: ZyroTheme.darkCharcoal,
+                            color: ZyroTheme.textPrimary(context),
                           ),
                         ),
                         const SizedBox(height: 3),
@@ -357,9 +357,9 @@ class TripHistoryCard extends StatelessWidget {
                   ],
                 ),
 
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 12),
-                  child: Divider(height: 1, color: ZyroTheme.borderLight),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Divider(height: 1, color: ZyroTheme.borderColor(context)),
                 ),
 
                 // Pickup and Destination
@@ -374,7 +374,7 @@ class TripHistoryCard extends StatelessWidget {
                 _RouteRow(
                   icon: Icons.location_on_rounded,
                   iconSize: 14,
-                  iconColor: ZyroTheme.darkCharcoal,
+                  iconColor: ZyroTheme.textPrimary(context),
                   title: 'To',
                   address: trip.destination,
                 ),
@@ -420,7 +420,7 @@ class _RouteRow extends StatelessWidget {
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
-                    color: ZyroTheme.mutedText,
+                    color: ZyroTheme.textSecondary(context),
                   ),
                 ),
                 TextSpan(
@@ -428,7 +428,7 @@ class _RouteRow extends StatelessWidget {
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w500,
-                    color: ZyroTheme.darkCharcoal,
+                    color: ZyroTheme.textPrimary(context),
                   ),
                 ),
               ],

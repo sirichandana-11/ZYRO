@@ -10,6 +10,7 @@ class ServiceModel {
   final Color iconColor;
   final bool isAvailable;
   final String? badgeText;
+  final String? startingPrice;
 
   const ServiceModel({
     required this.id,
@@ -19,6 +20,7 @@ class ServiceModel {
     required this.iconColor,
     this.isAvailable = true,
     this.badgeText,
+    this.startingPrice,
   });
 }
 
@@ -34,16 +36,19 @@ class ServiceCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = ZyroTheme.isDarkMode(context);
+
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: ZyroTheme.cardBg(context),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
           color: service.isAvailable
-              ? ZyroTheme.borderLight
-              : ZyroTheme.borderLight.withValues(alpha: 0.6),
+              ? ZyroTheme.borderColor(context)
+              : ZyroTheme.borderColor(context).withValues(alpha: 0.5),
+          width: 1.2,
         ),
-        boxShadow: ZyroTheme.softCardShadow,
+        boxShadow: isDark ? [] : ZyroTheme.softCardShadow,
       ),
       child: Material(
         color: Colors.transparent,
@@ -51,41 +56,41 @@ class ServiceCard extends StatelessWidget {
           onTap: onTap,
           borderRadius: BorderRadius.circular(20),
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(15),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // Top Row: Icon + Badge
+                // Top Row: Icon + Badge / Price
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Container(
-                      width: 46,
-                      height: 46,
+                      width: 44,
+                      height: 44,
                       decoration: BoxDecoration(
-                        color: service.iconColor.withValues(alpha: 0.12),
+                        color: service.iconColor.withValues(alpha: 0.14),
                         borderRadius: BorderRadius.circular(14),
                       ),
                       child: Icon(
                         service.icon,
                         color: service.iconColor,
-                        size: 24,
+                        size: 22,
                       ),
                     ),
                     if (!service.isAvailable)
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                         decoration: BoxDecoration(
-                          color: const Color(0xFFF1F3F5),
+                          color: isDark ? const Color(0xFF262C36) : const Color(0xFFF1F3F5),
                           borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: ZyroTheme.borderLight),
+                          border: Border.all(color: ZyroTheme.borderColor(context)),
                         ),
                         child: Text(
                           service.badgeText ?? 'Coming Soon',
                           style: GoogleFonts.plusJakartaSans(
-                            fontSize: 10,
+                            fontSize: 9.5,
                             fontWeight: FontWeight.w700,
                             color: ZyroTheme.mutedText,
                           ),
@@ -95,14 +100,14 @@ class ServiceCard extends StatelessWidget {
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                         decoration: BoxDecoration(
-                          color: ZyroTheme.primarySurface,
+                          color: ZyroTheme.primarySurfaceAdaptive(context),
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
                           service.badgeText!,
                           style: GoogleFonts.plusJakartaSans(
                             fontSize: 10,
-                            fontWeight: FontWeight.w700,
+                            fontWeight: FontWeight.w800,
                             color: ZyroTheme.primaryColor,
                           ),
                         ),
@@ -110,28 +115,47 @@ class ServiceCard extends StatelessWidget {
                   ],
                 ),
 
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
 
                 // Title & Subtitle
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      service.title,
-                      style: GoogleFonts.plusJakartaSans(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: service.isAvailable
-                            ? ZyroTheme.darkCharcoal
-                            : ZyroTheme.bodyText,
-                      ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            service.title,
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 14.5,
+                              fontWeight: FontWeight.w700,
+                              color: service.isAvailable
+                                  ? ZyroTheme.textPrimary(context)
+                                  : ZyroTheme.textSecondary(context),
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (service.startingPrice != null)
+                          Text(
+                            service.startingPrice!,
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w800,
+                              color: ZyroTheme.primaryColor,
+                            ),
+                          ),
+                      ],
                     ),
                     const SizedBox(height: 3),
                     Text(
                       service.subtitle,
                       style: GoogleFonts.plusJakartaSans(
-                        fontSize: 12,
-                        color: ZyroTheme.mutedText,
+                        fontSize: 11.5,
+                        color: ZyroTheme.textSecondary(context),
+                        height: 1.25,
                       ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,

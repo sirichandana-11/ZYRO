@@ -34,7 +34,7 @@ class GeospatialMatchingService {
    * Generates a spatial bounding box for candidate filtering.
    * Approx 1 deg lat = 111 km, 1 deg lon = 111 * cos(lat) km.
    */
-  static getBoundingBox(centerLat, centerLng, radiusKm = 10.0) {
+  static getBoundingBox(centerLat, centerLng, radiusKm = 2.0) {
     const latDelta = radiusKm / 111.0;
     const lonDelta = radiusKm / (111.0 * Math.cos(this.toRadians(centerLat)));
 
@@ -56,8 +56,8 @@ class GeospatialMatchingService {
   }
 
   /**
-   * Finds eligible drivers within geographic radius and applies strict operational filters:
-   * 1. Spatial bounding box & distance threshold
+   * Finds eligible drivers within geographic radius (strictly <= 2.0 KM) and applies operational filters:
+   * 1. Spatial bounding box & distance threshold (<= 2.0 KM)
    * 2. Online and available status
    * 3. Vehicle type match
    * 4. Location freshness threshold (rejects drivers with stale telemetry > 30s)
@@ -67,7 +67,7 @@ class GeospatialMatchingService {
     pickupLat,
     pickupLng,
     rideType,
-    maxRadiusKm = 10.0,
+    maxRadiusKm = 2.0,
     maxLocationAgeSeconds = 30,
   }) {
     if (!drivers || drivers.length === 0) return [];

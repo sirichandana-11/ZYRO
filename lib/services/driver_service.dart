@@ -11,10 +11,11 @@ class DriverService {
     }
     return _instance;
   }
-  DriverService._internal() : _firestore = FirebaseFirestore.instance;
-  DriverService._withFirestore(this._firestore);
+  DriverService._internal() : _customFirestore = null;
+  DriverService._withFirestore(this._customFirestore);
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _customFirestore;
+  FirebaseFirestore get _firestore => _customFirestore ?? FirebaseFirestore.instance;
 
   CollectionReference<Map<String, dynamic>> get _driversCollection =>
       _firestore.collection('drivers');

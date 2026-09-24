@@ -97,6 +97,159 @@ class AuthService {
     return null;
   }
 
+  /// Validates phone number
+  String? validatePhone(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'Phone number is required';
+    }
+    final digitsOnly = value.replaceAll(RegExp(r'\D'), '');
+    if (digitsOnly.length < 10) {
+      return 'Please enter a valid 10-digit phone number';
+    }
+    return null;
+  }
+
+  /// Validates vehicle number
+  String? validateVehicleNumber(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'Vehicle registration number is required';
+    }
+    if (value.trim().length < 4) {
+      return 'Please enter a valid registration number';
+    }
+    return null;
+  }
+
+  /// Validates vehicle type
+  String? validateVehicleType(String? value) {
+    if (value == null || value.trim().isEmpty) {
+      return 'Vehicle type is required';
+    }
+    final validTypes = ['bike', 'auto', 'cab'];
+    if (!validTypes.contains(value.trim().toLowerCase())) {
+      return 'Vehicle type must be Bike, Auto, or Cab';
+    }
+    return null;
+  }
+
+  /// Stream user profile document from Firestore (`users/{uid}`)
+  Stream<Map<String, dynamic>?> watchUserProfile(String uid) {
+    if (uid.isEmpty) return Stream.value(null);
+    return _firestore.collection('users').doc(uid).snapshots().map((snapshot) {
+      if (!snapshot.exists || snapshot.data() == null) {
+        return null;
+      }
+      return snapshot.data();
+    });
+  }
+
+  /// Fetches user profile document once from Firestore (`users/{uid}`)
+  Future<Map<String, dynamic>?> getUserProfile(String uid) async {
+    if (uid.isEmpty) return null;
+    final doc = await _firestore.collection('users').doc(uid).get();
+    if (!doc.exists || doc.data() == null) return null;
+    return doc.data();
+  }
+
+  /// Updates personal profile for a user
+  Future<void> updateUserProfile({
+    required String uid,
+    required String name,
+    required String phone,
+    String? photoUrl,
+  }) async {
+    final nameError = validateFullName(name);
+    if (nameError != null) throw nameError;
+
+    final phoneError = validatePhone(phone);
+    if (phoneError != null) throw phoneError;
+
+    final trimmedName = name.trim();
+    final trimmedPhone = phone.trim();
+
+    // 1. Update Firebase Auth display name if matching current user
+    if (_auth.currentUser != null && _auth.currentUser!.uid == uid) {
+      await _auth.currentUser!.updateDisplayName(trimmedName);
+      if (photoUrl != null && photoUrl.isNotEmpty) {
+        await _auth.currentUser!.updatePhotoURL(photoUrl);
+      }
+      await _auth.currentUser!.reload();
+    }
+
+    // 2. Update Firestore users collection
+    final userUpdates = <String, dynamic>{
+      'name': trimmedName,
+      'phone': trimmedPhone,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+    if (photoUrl != null) {
+      userUpdates['photoUrl'] = photoUrl;
+    }
+
+    await _firestore.collection('users').doc(uid).set(
+          userUpdates,
+          SetOptions(merge: true),
+        );
+
+    // 3. If driver document exists, keep driver name & phone synchronized
+    final driverDoc = await _firestore.collection('drivers').doc(uid).get();
+    if (driverDoc.exists) {
+      await _firestore.collection('drivers').doc(uid).update({
+        'name': trimmedName,
+        'phone': trimmedPhone,
+      });
+    }
+  }
+
+  /// Updates driver vehicle & profile details
+  Future<void> updateDriverProfile({
+    required String uid,
+    required String name,
+    required String phone,
+    required String vehicleType,
+    required String vehicleNumber,
+  }) async {
+    final nameError = validateFullName(name);
+    if (nameError != null) throw nameError;
+
+    final phoneError = validatePhone(phone);
+    if (phoneError != null) throw phoneError;
+
+    final vehicleTypeError = validateVehicleType(vehicleType);
+    if (vehicleTypeError != null) throw vehicleTypeError;
+
+    final vehicleNumError = validateVehicleNumber(vehicleNumber);
+    if (vehicleNumError != null) throw vehicleNumError;
+
+    final trimmedName = name.trim();
+    final trimmedPhone = phone.trim();
+    final sanitizedType = vehicleType.trim().toLowerCase();
+    final sanitizedNumber = vehicleNumber.trim().toUpperCase();
+
+    // 1. Update Firebase Auth display name
+    if (_auth.currentUser != null && _auth.currentUser!.uid == uid) {
+      await _auth.currentUser!.updateDisplayName(trimmedName);
+      await _auth.currentUser!.reload();
+    }
+
+    // 2. Update users collection
+    await _firestore.collection('users').doc(uid).set({
+      'name': trimmedName,
+      'phone': trimmedPhone,
+      'vehicleType': sanitizedType,
+      'vehicleNumber': sanitizedNumber,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    // 3. Update drivers collection
+    await _firestore.collection('drivers').doc(uid).set({
+      'name': trimmedName,
+      'phone': trimmedPhone,
+      'vehicleType': sanitizedType,
+      'vehicleNumber': sanitizedNumber,
+    }, SetOptions(merge: true));
+  }
+
   /// Sign Up with Email and Password with role provisioning
   Future<UserCredential> signUpWithEmailPassword({
     required String email,

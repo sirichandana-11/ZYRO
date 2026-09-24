@@ -48,7 +48,7 @@ class RouteResult {
   }
 }
 
-/// Abstract routing service.
+/// Abstract routing service interface.
 abstract class RoutingService {
   Future<RouteResult?> getRoute({
     required LatLng origin,
@@ -56,6 +56,9 @@ abstract class RoutingService {
   });
 
   String get providerName;
+
+  /// Default production routing service backed by OSRM.
+  static RoutingService get instance => OsrmRoutingService();
 }
 
 /// OSRM road-routing implementation.
@@ -99,34 +102,9 @@ class OsrmRoutingService implements RoutingService {
     required LatLng origin,
     required LatLng destination,
   }) async {
-    // Validate origin.
-    if (!_isValidCoordinate(origin)) {
-      debugPrint(
-        'ZYRO routing: invalid origin '
-        '${origin.latitude}, ${origin.longitude}',
-      );
-
+    if (!_isValidCoordinate(origin) ||
+        !_isValidCoordinate(destination)) {
       return null;
-    }
-
-    // Validate destination.
-    if (!_isValidCoordinate(destination)) {
-      debugPrint(
-        'ZYRO routing: invalid destination '
-        '${destination.latitude}, ${destination.longitude}',
-      );
-
-      return null;
-    }
-
-    // Same location.
-    if (origin.latitude == destination.latitude &&
-        origin.longitude == destination.longitude) {
-      return RouteResult(
-        points: [origin],
-        distanceKm: 0.0,
-        durationMinutes: 0.0,
-      );
     }
 
     final cacheKey =
@@ -138,214 +116,110 @@ class OsrmRoutingService implements RoutingService {
       return cached;
     }
 
+    final coordinates =
+        '${origin.longitude.toStringAsFixed(6)},'
+        '${origin.latitude.toStringAsFixed(6)};'
+        '${destination.longitude.toStringAsFixed(6)},'
+        '${destination.latitude.toStringAsFixed(6)}';
+
+    final uri = Uri.https(
+      'router.project-osrm.org',
+      '/route/v1/driving/$coordinates',
+      {
+        'overview': 'full',
+        'geometries': 'geojson',
+        'steps': 'false',
+      },
+    );
+
     try {
-      /*
-       * IMPORTANT:
-       *
-       * OSRM requires:
-       * longitude,latitude
-       *
-       * NOT:
-       * latitude,longitude
-       */
-      final coordinates =
-          '${origin.longitude},${origin.latitude};'
-          '${destination.longitude},${destination.latitude}';
-
-      final uri = Uri.https(
-        'router.project-osrm.org',
-        '/route/v1/driving/$coordinates',
-        {
-          // Complete road geometry.
-          'overview': 'full',
-
-          // GeoJSON makes decoding easy.
-          'geometries': 'geojson',
-
-          // We need one normal route.
-          'alternatives': 'false',
-
-          // Allow the routing engine to choose
-          // the appropriate continuation.
-          'continue_straight': 'false',
-        },
-      );
-
-      debugPrint(
-        'ZYRO ROUTE REQUEST:\n'
-        'Origin: ${origin.latitude}, ${origin.longitude}\n'
-        'Destination: ${destination.latitude}, '
-        '${destination.longitude}',
-      );
-
       final response = await http
           .get(
             uri,
             headers: {
               'User-Agent': _userAgent,
-              'Accept': 'application/json',
             },
           )
           .timeout(
-            const Duration(seconds: 15),
+            const Duration(seconds: 10),
           );
 
       if (response.statusCode != 200) {
-        debugPrint(
-          'OSRM routing HTTP error: '
-          '${response.statusCode}',
-        );
-
         return null;
       }
 
-      final decoded = jsonDecode(response.body);
+      final decoded =
+          jsonDecode(response.body);
 
       if (decoded is! Map<String, dynamic>) {
-        debugPrint(
-          'OSRM returned unexpected response.',
-        );
-
         return null;
       }
 
-      final responseCode =
-          decoded['code']?.toString();
+      final code = decoded['code']?.toString();
 
-      if (responseCode != 'Ok') {
-        debugPrint(
-          'OSRM route error: $responseCode',
-        );
-
+      if (code != 'Ok') {
         return null;
       }
 
       final routes = decoded['routes'];
 
-      if (routes is! List ||
-          routes.isEmpty) {
-        debugPrint(
-          'OSRM returned no routes.',
-        );
-
+      if (routes is! List || routes.isEmpty) {
         return null;
       }
 
-      final firstRoute =
-          routes.first;
-
-      if (firstRoute
-          is! Map<String, dynamic>) {
-        return null;
-      }
+      final primary =
+          routes.first as Map<String, dynamic>;
 
       final distanceMeters =
-          (firstRoute['distance'] as num?)
+          (primary['distance'] as num?)
                   ?.toDouble() ??
               0.0;
 
       final durationSeconds =
-          (firstRoute['duration'] as num?)
+          (primary['duration'] as num?)
                   ?.toDouble() ??
               0.0;
 
-      if (distanceMeters <= 0) {
-        debugPrint(
-          'OSRM returned zero route distance.',
-        );
-
-        return null;
-      }
-
       final geometry =
-          firstRoute['geometry'];
+          primary['geometry'] as Map<String, dynamic>?;
 
-      if (geometry
-          is! Map<String, dynamic>) {
-        debugPrint(
-          'OSRM route has no geometry.',
-        );
+      final rawCoordinates =
+          geometry?['coordinates'] as List<dynamic>?;
 
-        return null;
+      final points = <LatLng>[];
+
+      if (rawCoordinates != null) {
+        for (final pair in rawCoordinates) {
+          if (pair is List && pair.length >= 2) {
+            final lon =
+                (pair[0] as num).toDouble();
+
+            final lat =
+                (pair[1] as num).toDouble();
+
+            if (Coordinate.isValid(lat, lon)) {
+              points.add(LatLng(lat, lon));
+            }
+          }
+        }
       }
 
-      final coordinatesList =
-          geometry['coordinates'];
-
-      if (coordinatesList is! List ||
-          coordinatesList.isEmpty) {
-        debugPrint(
-          'OSRM route geometry is empty.',
-        );
-
-        return null;
-      }
-
-      final routePoints = <LatLng>[];
-
-      for (final item in coordinatesList) {
-        if (item is! List ||
-            item.length < 2) {
-          continue;
-        }
-
-        final longitude =
-            (item[0] as num?)?.toDouble();
-
-        final latitude =
-            (item[1] as num?)?.toDouble();
-
-        if (latitude == null ||
-            longitude == null) {
-          continue;
-        }
-
-        if (latitude < -90 ||
-            latitude > 90 ||
-            longitude < -180 ||
-            longitude > 180) {
-          continue;
-        }
-
-        routePoints.add(
-          LatLng(
-            latitude,
-            longitude,
-          ),
-        );
-      }
-
-      if (routePoints.length < 2) {
-        debugPrint(
-          'OSRM returned insufficient route points.',
-        );
-
-        return null;
+      if (points.isEmpty) {
+        points.add(origin);
+        points.add(destination);
       }
 
       final result = RouteResult(
-        points: routePoints,
-        distanceKm:
-            distanceMeters / 1000.0,
-        durationMinutes:
-            durationSeconds / 60.0,
+        points: points,
+        distanceKm: distanceMeters / 1000.0,
+        durationMinutes: durationSeconds / 60.0,
       );
 
       _cache[cacheKey] = result;
 
-      debugPrint(
-        'ZYRO ROUTE RESULT: '
-        '${result.formattedDistance} | '
-        '${result.formattedDuration} | '
-        'points=${routePoints.length}',
-      );
-
       return result;
     } catch (e) {
-      debugPrint(
-        'ZYRO routing error: $e',
-      );
-
+      debugPrint('OSRM routing error: $e');
       return null;
     }
   }

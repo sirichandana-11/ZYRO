@@ -102,12 +102,12 @@ exports.onRideCreated = onDocumentCreated('rides/{rideId}', async (event) => {
     requestedAt.nanoseconds
   );
 
-  // 2. Query eligible nearby drivers
+  // 2. Query eligible nearby drivers within strict 2 KM radius
   const eligibleDrivers = await driverService.findEligibleDrivers({
     pickupLatitude: rideData.pickupLatitude,
     pickupLongitude: rideData.pickupLongitude,
     rideType: rideData.rideType,
-    maxRadiusKm: 10,
+    maxRadiusKm: 2,
   });
 
   console.log(

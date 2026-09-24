@@ -133,13 +133,13 @@ class _SignupScreenState extends State<SignupScreen> {
     final isDriver = _selectedRole == 'driver';
 
     return Scaffold(
-      backgroundColor: ZyroTheme.backgroundLight,
+      backgroundColor: ZyroTheme.scaffoldBg(context),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new_rounded,
-              color: ZyroTheme.darkCharcoal, size: 20),
+          icon: Icon(Icons.arrow_back_ios_new_rounded,
+              color: ZyroTheme.textPrimary(context), size: 20),
           onPressed: () => Navigator.of(context).pop(),
           tooltip: 'Back to login',
         ),
@@ -152,11 +152,11 @@ class _SignupScreenState extends State<SignupScreen> {
               constraints: const BoxConstraints(maxWidth: 480),
               child: Container(
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: ZyroTheme.cardBg(context),
                   borderRadius: BorderRadius.circular(28),
-                  boxShadow: ZyroTheme.softCardShadow,
+                  boxShadow: ZyroTheme.cardShadow(context),
                   border: Border.all(
-                    color: ZyroTheme.borderLight.withValues(alpha: 0.6),
+                    color: ZyroTheme.borderColor(context),
                   ),
                 ),
                 padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
@@ -171,7 +171,7 @@ class _SignupScreenState extends State<SignupScreen> {
                           Container(
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
-                              color: ZyroTheme.primarySurface,
+                              color: ZyroTheme.primarySurfaceAdaptive(context),
                               borderRadius: BorderRadius.circular(14),
                             ),
                             child: Icon(
@@ -193,7 +193,7 @@ class _SignupScreenState extends State<SignupScreen> {
                                 style: GoogleFonts.plusJakartaSans(
                                   fontSize: 21,
                                   fontWeight: FontWeight.w800,
-                                  color: ZyroTheme.darkCharcoal,
+                                  color: ZyroTheme.textPrimary(context),
                                   letterSpacing: -0.3,
                                 ),
                               ),
@@ -204,7 +204,7 @@ class _SignupScreenState extends State<SignupScreen> {
                                 style: GoogleFonts.plusJakartaSans(
                                   fontSize: 12.5,
                                   fontWeight: FontWeight.w500,
-                                  color: ZyroTheme.mutedText,
+                                  color: ZyroTheme.textSecondary(context),
                                 ),
                               ),
                             ],
@@ -220,16 +220,18 @@ class _SignupScreenState extends State<SignupScreen> {
                         style: GoogleFonts.plusJakartaSans(
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
-                          color: ZyroTheme.darkCharcoal,
+                          color: ZyroTheme.textPrimary(context),
                         ),
                       ),
                       const SizedBox(height: 8),
                       Container(
                         padding: const EdgeInsets.all(4),
                         decoration: BoxDecoration(
-                          color: ZyroTheme.backgroundLight,
+                          color: ZyroTheme.isDarkMode(context)
+                              ? ZyroTheme.surfaceDarkElevated
+                              : ZyroTheme.backgroundLight,
                           borderRadius: BorderRadius.circular(14),
-                          border: Border.all(color: ZyroTheme.borderLight),
+                          border: Border.all(color: ZyroTheme.borderColor(context)),
                         ),
                         child: Row(
                           children: [
@@ -243,7 +245,7 @@ class _SignupScreenState extends State<SignupScreen> {
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(vertical: 10),
                                   decoration: BoxDecoration(
-                                    color: !isDriver ? Colors.white : Colors.transparent,
+                                    color: !isDriver ? ZyroTheme.cardBg(context) : Colors.transparent,
                                     borderRadius: BorderRadius.circular(10),
                                     boxShadow: !isDriver
                                         ? [
@@ -272,8 +274,8 @@ class _SignupScreenState extends State<SignupScreen> {
                                           fontWeight: FontWeight.w700,
                                           fontSize: 13,
                                           color: !isDriver
-                                              ? ZyroTheme.darkCharcoal
-                                              : ZyroTheme.mutedText,
+                                              ? ZyroTheme.textPrimary(context)
+                                              : ZyroTheme.textSecondary(context),
                                         ),
                                       ),
                                     ],
@@ -291,7 +293,7 @@ class _SignupScreenState extends State<SignupScreen> {
                                 child: Container(
                                   padding: const EdgeInsets.symmetric(vertical: 10),
                                   decoration: BoxDecoration(
-                                    color: isDriver ? Colors.white : Colors.transparent,
+                                    color: isDriver ? ZyroTheme.cardBg(context) : Colors.transparent,
                                     borderRadius: BorderRadius.circular(10),
                                     boxShadow: isDriver
                                         ? [
@@ -320,8 +322,8 @@ class _SignupScreenState extends State<SignupScreen> {
                                           fontWeight: FontWeight.w700,
                                           fontSize: 13,
                                           color: isDriver
-                                              ? ZyroTheme.darkCharcoal
-                                              : ZyroTheme.mutedText,
+                                              ? ZyroTheme.textPrimary(context)
+                                              : ZyroTheme.textSecondary(context),
                                         ),
                                       ),
                                     ],

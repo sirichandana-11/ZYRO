@@ -13,6 +13,11 @@ class DriverModel {
   final double longitude;
   final DateTime? lastRideCompletedAt;
   final String? activeRideId;
+  final double ratingSum;
+  final int ratingCount;
+  final double averageRating;
+  final int completedRidesCount;
+  final DateTime? locationUpdatedAt;
 
   const DriverModel({
     required this.id,
@@ -26,6 +31,11 @@ class DriverModel {
     this.longitude = 0.0,
     this.lastRideCompletedAt,
     this.activeRideId,
+    this.ratingSum = 0.0,
+    this.ratingCount = 0,
+    this.averageRating = 5.0,
+    this.completedRidesCount = 0,
+    this.locationUpdatedAt,
   });
 
   /// Creates a [DriverModel] from a Map and an optional document ID.
@@ -39,6 +49,12 @@ class DriverModel {
       return null;
     }
 
+    final rSum = (map['ratingSum'] as num?)?.toDouble() ?? 0.0;
+    final rCount = (map['ratingCount'] as num?)?.toInt() ?? 0;
+    final avg = rCount > 0
+        ? (rSum / rCount)
+        : ((map['averageRating'] as num?)?.toDouble() ?? 5.0);
+
     return DriverModel(
       id: id.isNotEmpty ? id : (map['id'] as String? ?? ''),
       name: map['name'] as String? ?? '',
@@ -51,6 +67,11 @@ class DriverModel {
       longitude: (map['longitude'] as num?)?.toDouble() ?? 0.0,
       lastRideCompletedAt: parseDateTime(map['lastRideCompletedAt']),
       activeRideId: map['activeRideId'] as String?,
+      ratingSum: rSum,
+      ratingCount: rCount,
+      averageRating: double.parse(avg.toStringAsFixed(1)),
+      completedRidesCount: (map['completedRidesCount'] as num?)?.toInt() ?? 0,
+      locationUpdatedAt: parseDateTime(map['locationUpdatedAt']),
     );
   }
 
@@ -76,6 +97,13 @@ class DriverModel {
           ? Timestamp.fromDate(lastRideCompletedAt!)
           : null,
       'activeRideId': activeRideId,
+      'ratingSum': ratingSum,
+      'ratingCount': ratingCount,
+      'averageRating': averageRating,
+      'completedRidesCount': completedRidesCount,
+      'locationUpdatedAt': locationUpdatedAt != null
+          ? Timestamp.fromDate(locationUpdatedAt!)
+          : null,
     };
   }
 
@@ -92,6 +120,11 @@ class DriverModel {
     double? longitude,
     DateTime? lastRideCompletedAt,
     String? activeRideId,
+    double? ratingSum,
+    int? ratingCount,
+    double? averageRating,
+    int? completedRidesCount,
+    DateTime? locationUpdatedAt,
   }) {
     return DriverModel(
       id: id ?? this.id,
@@ -105,6 +138,11 @@ class DriverModel {
       longitude: longitude ?? this.longitude,
       lastRideCompletedAt: lastRideCompletedAt ?? this.lastRideCompletedAt,
       activeRideId: activeRideId ?? this.activeRideId,
+      ratingSum: ratingSum ?? this.ratingSum,
+      ratingCount: ratingCount ?? this.ratingCount,
+      averageRating: averageRating ?? this.averageRating,
+      completedRidesCount: completedRidesCount ?? this.completedRidesCount,
+      locationUpdatedAt: locationUpdatedAt ?? this.locationUpdatedAt,
     );
   }
 }

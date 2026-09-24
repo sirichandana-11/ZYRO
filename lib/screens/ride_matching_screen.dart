@@ -46,7 +46,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
   late final AnimationController _pulseController;
 
   final DriverService _driverService = DriverService();
-  final RoutingService _routingService = OsrmRoutingService();
+  final RoutingService _routingService = RoutingService.instance;
   final WebSocketService _webSocketService = WebSocketService.instance;
 
   StreamSubscription<DriverModel?>? _assignedDriverSubscription;
@@ -59,6 +59,60 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
   List<LatLng>? _routePoints;
   String? _subscribedDriverId;
   String? _subscribedRideId;
+  bool _isCancelling = false;
+
+  Future<void> _handleCancelRide() async {
+    if (_isCancelling) return;
+    setState(() {
+      _isCancelling = true;
+    });
+
+    // 1. Unsubscribe and cancel active streams
+    if (_subscribedRideId != null) {
+      _webSocketService.unsubscribeRide(_subscribedRideId!);
+    }
+    _wsDriverLocationSubscription?.cancel();
+    _wsRideAssignedSubscription?.cancel();
+    _assignedDriverSubscription?.cancel();
+    _pulseController.stop();
+
+    // 2. Authoritatively cancel in Firestore & local service
+    try {
+      await _allocationService.cancelRide();
+    } catch (e) {
+      debugPrint('[RideMatchingScreen] Error cancelling ride: $e');
+    }
+
+    if (!mounted) return;
+
+    // 3. Close matching screen and return to Home
+    Navigator.pop(context, 'cancelled');
+
+    // 4. Present clear success confirmation to rider
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: ZyroTheme.darkCharcoal,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        content: Row(
+          children: [
+            const Icon(Icons.cancel_rounded, color: Colors.white, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Ride Cancelled: Your ride request has been cancelled.',
+                style: GoogleFonts.plusJakartaSans(
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
+        duration: const Duration(seconds: 3),
+      ),
+    );
+  }
 
   @override
   void initState() {
@@ -94,12 +148,14 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
               id: loc.driverId,
               name: 'Assigned Driver',
               phone: '+91 98765 00000',
+              vehicleNumber: 'AP 31 ZY 9999',
               vehicleType: widget.rideType,
-              vehicleNumber: 'ZYRO-LIVE',
-              isOnline: true,
-              isAvailable: false,
               latitude: loc.latitude,
               longitude: loc.longitude,
+              isOnline: true,
+              isAvailable: false,
+              averageRating: 4.9,
+              completedRidesCount: 150,
             );
           }
         });
@@ -107,27 +163,22 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
     });
 
     _wsRideAssignedSubscription =
-        _webSocketService.onRideAssigned.listen((assigned) {
+        _webSocketService.onRideAssigned.listen((event) {
       if (!mounted) return;
-      if (assigned.rideId == _subscribedRideId) {
+      if (event.rideId == _subscribedRideId || event.rideId == stateRideId) {
         setState(() {
-          _subscribedDriverId = assigned.driverId;
-          _realtimeAssignedDriver = DriverModel(
-            id: assigned.driverId,
-            name: assigned.driverName,
-            phone: assigned.driverPhone ?? '+91 98765 00000',
-            vehicleType: assigned.vehicleType ?? widget.rideType,
-            vehicleNumber: assigned.vehicleNumber ?? 'ZYRO-101',
-            isOnline: true,
-            isAvailable: false,
-            latitude: assigned.latitude != 0.0 ? assigned.latitude : widget.pickupLat,
-            longitude: assigned.longitude != 0.0 ? assigned.longitude : widget.pickupLng,
-          );
+          _subscribedDriverId = event.driverId;
         });
       }
     });
 
-    // Start 120-second allocation
+    // Start 120s search process
+    _startMatchingProcess();
+  }
+
+  String? get stateRideId => _allocationService.state?.ride.id;
+
+  Future<void> _startMatchingProcess() async {
     _allocationService.startRideAllocation(
       riderId: widget.riderId,
       pickupLatitude: widget.pickupLat,
@@ -178,14 +229,20 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
         assignedDriverId != _subscribedDriverId) {
       _subscribedDriverId = assignedDriverId;
       _assignedDriverSubscription?.cancel();
-      _assignedDriverSubscription =
-          _driverService.watchDriver(assignedDriverId).listen((driver) {
-        if (mounted) {
-          setState(() {
-            _realtimeAssignedDriver = driver;
-          });
-        }
-      });
+      try {
+        _assignedDriverSubscription =
+            _driverService.watchDriver(assignedDriverId).listen((driver) {
+          if (mounted) {
+            setState(() {
+              _realtimeAssignedDriver = driver;
+            });
+          }
+        }, onError: (e) {
+          debugPrint('[RideMatchingScreen] Watch driver stream error: $e');
+        });
+      } catch (e) {
+        debugPrint('[RideMatchingScreen] Firestore stream unavailable: $e');
+      }
     }
 
     setState(() {});
@@ -196,6 +253,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
     if (_subscribedRideId != null) {
       _webSocketService.unsubscribeRide(_subscribedRideId!);
     }
+    _webSocketService.disconnect();
     _wsDriverLocationSubscription?.cancel();
     _wsRideAssignedSubscription?.cancel();
     _assignedDriverSubscription?.cancel();
@@ -237,8 +295,9 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
     final state = _allocationService.state;
 
     if (state == null) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
+      return Scaffold(
+        backgroundColor: ZyroTheme.scaffoldBg(context),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
@@ -247,17 +306,16 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
     final isCancelled = state.ride.status == RideStatus.cancelled;
 
     return Scaffold(
-      backgroundColor: ZyroTheme.backgroundLight,
+      backgroundColor: ZyroTheme.scaffoldBg(context),
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: ZyroTheme.cardBg(context),
+        foregroundColor: ZyroTheme.textPrimary(context),
         elevation: 0,
+        scrolledUnderElevation: 0,
         centerTitle: true,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_rounded, color: ZyroTheme.darkCharcoal),
-          onPressed: () {
-            _allocationService.cancelRide();
-            Navigator.pop(context);
-          },
+          icon: Icon(Icons.arrow_back_rounded, color: ZyroTheme.textPrimary(context)),
+          onPressed: _isCancelling ? null : _handleCancelRide,
         ),
         title: Text(
           isAssigned
@@ -266,7 +324,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
           style: GoogleFonts.plusJakartaSans(
             fontWeight: FontWeight.w700,
             fontSize: 18,
-            color: ZyroTheme.darkCharcoal,
+            color: ZyroTheme.textPrimary(context),
           ),
         ),
       ),
@@ -338,10 +396,10 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: ZyroTheme.cardBg(context),
         borderRadius: BorderRadius.circular(16),
-        boxShadow: ZyroTheme.softCardShadow,
-        border: Border.all(color: ZyroTheme.borderLight),
+        boxShadow: ZyroTheme.cardShadow(context),
+        border: Border.all(color: ZyroTheme.borderColor(context)),
       ),
       child: Column(
         children: [
@@ -350,7 +408,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: ZyroTheme.primarySurface,
+                  color: ZyroTheme.primarySurfaceAdaptive(context),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Icon(
@@ -369,7 +427,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                       style: GoogleFonts.plusJakartaSans(
                         fontWeight: FontWeight.w700,
                         fontSize: 16,
-                        color: ZyroTheme.darkCharcoal,
+                        color: ZyroTheme.textPrimary(context),
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -387,7 +445,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
               _buildStatusBadge(state.ride.status),
             ],
           ),
-          const Divider(height: 24, color: ZyroTheme.borderLight),
+          Divider(height: 24, color: ZyroTheme.borderColor(context)),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -398,7 +456,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                   Container(
                     width: 2,
                     height: 24,
-                    color: ZyroTheme.borderLight,
+                    color: ZyroTheme.borderColor(context),
                   ),
                   const Icon(Icons.location_on_rounded,
                       size: 16, color: ZyroTheme.successGreen),
@@ -416,7 +474,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
-                        color: ZyroTheme.darkCharcoal,
+                        color: ZyroTheme.textPrimary(context),
                       ),
                     ),
                     const SizedBox(height: 14),
@@ -427,7 +485,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 13,
                         fontWeight: FontWeight.w600,
-                        color: ZyroTheme.darkCharcoal,
+                        color: ZyroTheme.textPrimary(context),
                       ),
                     ),
                   ],
@@ -490,10 +548,10 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: ZyroTheme.cardBg(context),
         borderRadius: BorderRadius.circular(16),
-        boxShadow: ZyroTheme.softCardShadow,
-        border: Border.all(color: ZyroTheme.borderLight),
+        boxShadow: ZyroTheme.cardShadow(context),
+        border: Border.all(color: ZyroTheme.borderColor(context)),
       ),
       child: Column(
         children: [
@@ -509,7 +567,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                     child: CircularProgressIndicator(
                       value: progress,
                       strokeWidth: 6,
-                      backgroundColor: ZyroTheme.borderLight,
+                      backgroundColor: ZyroTheme.borderColor(context),
                       valueColor: AlwaysStoppedAnimation<Color>(
                         progress > 0.25
                             ? ZyroTheme.primaryColor
@@ -525,7 +583,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                         style: GoogleFonts.plusJakartaSans(
                           fontWeight: FontWeight.w800,
                           fontSize: 16,
-                          color: ZyroTheme.darkCharcoal,
+                          color: ZyroTheme.textPrimary(context),
                         ),
                       ),
                       Text(
@@ -533,7 +591,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                         style: GoogleFonts.plusJakartaSans(
                           fontSize: 10,
                           fontWeight: FontWeight.w600,
-                          color: ZyroTheme.mutedText,
+                          color: ZyroTheme.textSecondary(context),
                         ),
                       ),
                     ],
@@ -550,7 +608,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                       style: GoogleFonts.plusJakartaSans(
                         fontWeight: FontWeight.w700,
                         fontSize: 15,
-                        color: ZyroTheme.darkCharcoal,
+                        color: ZyroTheme.textPrimary(context),
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -558,7 +616,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                       'Offering ride to nearby drivers. If none accept by 00:00, the mandatory backup driver is automatically assigned.',
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 12,
-                        color: ZyroTheme.bodyText,
+                        color: ZyroTheme.textSecondary(context),
                         height: 1.35,
                       ),
                     ),
@@ -577,13 +635,16 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
     if (backup == null) return const SizedBox.shrink();
 
     final dist = state.driverDistancesKm[backup.id] ?? 1.2;
+    final isDark = ZyroTheme.isDarkMode(context);
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFFF0FDF4),
+        color: isDark ? const Color(0xFF0F291E) : const Color(0xFFF0FDF4),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFF86EFAC)),
+        border: Border.all(
+          color: isDark ? const Color(0xFF166534) : const Color(0xFF86EFAC),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -619,7 +680,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                 style: GoogleFonts.plusJakartaSans(
                   fontWeight: FontWeight.w600,
                   fontSize: 11,
-                  color: const Color(0xFF15803D),
+                  color: isDark ? const Color(0xFF86EFAC) : const Color(0xFF15803D),
                 ),
               ),
             ],
@@ -629,12 +690,12 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
             children: [
               CircleAvatar(
                 radius: 20,
-                backgroundColor: const Color(0xFFDCFCE7),
+                backgroundColor: isDark ? const Color(0xFF166534) : const Color(0xFFDCFCE7),
                 child: Text(
                   backup.name.substring(0, 1),
                   style: GoogleFonts.plusJakartaSans(
                     fontWeight: FontWeight.w700,
-                    color: const Color(0xFF15803D),
+                    color: isDark ? Colors.white : const Color(0xFF15803D),
                   ),
                 ),
               ),
@@ -648,7 +709,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                       style: GoogleFonts.plusJakartaSans(
                         fontWeight: FontWeight.w700,
                         fontSize: 14.5,
-                        color: ZyroTheme.darkCharcoal,
+                        color: ZyroTheme.textPrimary(context),
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -656,7 +717,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                       '${backup.vehicleNumber} • ${dist.toStringAsFixed(1)} km away',
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 12,
-                        color: ZyroTheme.bodyText,
+                        color: ZyroTheme.textSecondary(context),
                       ),
                     ),
                   ],
@@ -668,8 +729,9 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: Colors.white,
+              color: isDark ? ZyroTheme.surfaceDarkElevated : Colors.white,
               borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: ZyroTheme.borderColor(context)),
             ),
             child: Row(
               children: [
@@ -682,7 +744,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                     style: GoogleFonts.plusJakartaSans(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
-                      color: const Color(0xFF166534),
+                      color: isDark ? const Color(0xFF86EFAC) : const Color(0xFF166534),
                     ),
                   ),
                 ),
@@ -695,13 +757,15 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
   }
 
   Widget _buildBroadcastingSection(DemoRideState state) {
+    final isDark = ZyroTheme.isDarkMode(context);
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: ZyroTheme.cardBg(context),
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: ZyroTheme.borderLight),
-        boxShadow: ZyroTheme.softCardShadow,
+        border: Border.all(color: ZyroTheme.borderColor(context)),
+        boxShadow: ZyroTheme.cardShadow(context),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -722,14 +786,14 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                 style: GoogleFonts.plusJakartaSans(
                   fontWeight: FontWeight.w700,
                   fontSize: 14,
-                  color: ZyroTheme.darkCharcoal,
+                  color: ZyroTheme.textPrimary(context),
                 ),
               ),
               const Spacer(),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: ZyroTheme.primarySurface,
+                  color: ZyroTheme.primarySurfaceAdaptive(context),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
@@ -748,29 +812,31 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
             'Dispatched in real-time to nearby eligible drivers. First driver to accept is assigned immediately.',
             style: GoogleFonts.plusJakartaSans(
               fontSize: 12,
-              color: ZyroTheme.bodyText,
+              color: ZyroTheme.textSecondary(context),
               height: 1.35,
             ),
           ),
           Theme(
             data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-            child: ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              childrenPadding: const EdgeInsets.only(top: 6),
-              title: Text(
-                'View Eligible Driver Candidates (${state.eligibleDrivers.length})',
-                style: GoogleFonts.plusJakartaSans(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: ZyroTheme.primaryColor,
+            child: Material(
+              type: MaterialType.transparency,
+              child: ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                childrenPadding: const EdgeInsets.only(top: 6),
+                title: Text(
+                  'View Eligible Driver Candidates (${state.eligibleDrivers.length})',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: ZyroTheme.primaryColor,
+                  ),
                 ),
-              ),
-              children: [
-                ListView.separated(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  itemCount: state.eligibleDrivers.length,
-                  separatorBuilder: (context, index) => const SizedBox(height: 8),
+                children: [
+                  ListView.separated(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: state.eligibleDrivers.length,
+                    separatorBuilder: (context, index) => const SizedBox(height: 8),
                   itemBuilder: (context, index) {
                     final driver = state.eligibleDrivers[index];
                     final dist = state.driverDistancesKm[driver.id] ?? 1.0;
@@ -780,13 +846,13 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                       decoration: BoxDecoration(
                         color: isBackup
-                            ? const Color(0xFFF0FDF4)
-                            : ZyroTheme.backgroundLight,
+                            ? (isDark ? const Color(0xFF0F291E) : const Color(0xFFF0FDF4))
+                            : (isDark ? ZyroTheme.surfaceDarkElevated : ZyroTheme.backgroundLight),
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(
                           color: isBackup
-                              ? const Color(0xFF86EFAC)
-                              : ZyroTheme.borderLight,
+                              ? (isDark ? const Color(0xFF166534) : const Color(0xFF86EFAC))
+                              : ZyroTheme.borderColor(context),
                         ),
                       ),
                       child: Row(
@@ -810,7 +876,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                                       style: GoogleFonts.plusJakartaSans(
                                         fontWeight: FontWeight.w700,
                                         fontSize: 13,
-                                        color: ZyroTheme.darkCharcoal,
+                                        color: ZyroTheme.textPrimary(context),
                                       ),
                                     ),
                                     if (isBackup) ...[
@@ -819,7 +885,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                                         padding: const EdgeInsets.symmetric(
                                             horizontal: 6, vertical: 1.5),
                                         decoration: BoxDecoration(
-                                          color: const Color(0xFFDCFCE7),
+                                          color: isDark ? const Color(0xFF166534) : const Color(0xFFDCFCE7),
                                           borderRadius: BorderRadius.circular(4),
                                         ),
                                         child: Text(
@@ -827,7 +893,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                                           style: GoogleFonts.plusJakartaSans(
                                             fontSize: 9.5,
                                             fontWeight: FontWeight.w800,
-                                            color: const Color(0xFF15803D),
+                                            color: isDark ? Colors.white : const Color(0xFF15803D),
                                           ),
                                         ),
                                       ),
@@ -838,7 +904,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                                   '${driver.vehicleNumber} • ${dist.toStringAsFixed(1)} km away',
                                   style: GoogleFonts.plusJakartaSans(
                                     fontSize: 11,
-                                    color: ZyroTheme.mutedText,
+                                    color: ZyroTheme.textSecondary(context),
                                   ),
                                 ),
                               ],
@@ -863,7 +929,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                                 style: GoogleFonts.plusJakartaSans(
                                   fontSize: 11,
                                   fontWeight: FontWeight.w600,
-                                  color: ZyroTheme.mutedText,
+                                  color: ZyroTheme.textSecondary(context),
                                 ),
                               ),
                             ],
@@ -876,9 +942,10 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
               ],
             ),
           ),
-        ],
-      ),
-    );
+        ),
+      ],
+    ),
+  );
   }
 
   Widget _buildAssignedSuccessSection(DemoRideState state) {
@@ -886,21 +953,24 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
         state.backupDriver ??
         state.eligibleDrivers.first;
     final isBackupAssigned = state.assignmentReason == 'backup_auto_assigned';
+    final isDark = ZyroTheme.isDarkMode(context);
 
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: ZyroTheme.cardBg(context),
         borderRadius: BorderRadius.circular(20),
-        boxShadow: ZyroTheme.softCardShadow,
-        border: Border.all(color: const Color(0xFF86EFAC)),
+        boxShadow: ZyroTheme.cardShadow(context),
+        border: Border.all(
+          color: isDark ? const Color(0xFF166534) : const Color(0xFF86EFAC),
+        ),
       ),
       child: Column(
         children: [
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: const Color(0xFFDCFCE7),
+              color: isDark ? const Color(0xFF166534) : const Color(0xFFDCFCE7),
               shape: BoxShape.circle,
             ),
             child: const Icon(
@@ -918,7 +988,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
             style: GoogleFonts.plusJakartaSans(
               fontWeight: FontWeight.w800,
               fontSize: 18,
-              color: ZyroTheme.darkCharcoal,
+              color: ZyroTheme.textPrimary(context),
             ),
           ),
           const SizedBox(height: 6),
@@ -926,8 +996,8 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
               color: isBackupAssigned
-                  ? const Color(0xFFFEF3C7)
-                  : const Color(0xFFDCFCE7),
+                  ? (isDark ? const Color(0xFF451A03) : const Color(0xFFFEF3C7))
+                  : (isDark ? const Color(0xFF0F291E) : const Color(0xFFDCFCE7)),
               borderRadius: BorderRadius.circular(20),
             ),
             child: Text(
@@ -938,17 +1008,17 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                 fontSize: 11.5,
                 fontWeight: FontWeight.w700,
                 color: isBackupAssigned
-                    ? const Color(0xFF92400E)
-                    : const Color(0xFF166534),
+                    ? (isDark ? const Color(0xFFFDE68A) : const Color(0xFF92400E))
+                    : (isDark ? const Color(0xFF86EFAC) : const Color(0xFF166534)),
               ),
             ),
           ),
-          const Divider(height: 32, color: ZyroTheme.borderLight),
+          Divider(height: 32, color: ZyroTheme.borderColor(context)),
           Row(
             children: [
               CircleAvatar(
                 radius: 28,
-                backgroundColor: ZyroTheme.primarySurface,
+                backgroundColor: ZyroTheme.primarySurfaceAdaptive(context),
                 child: Text(
                   driver.name.substring(0, 1),
                   style: GoogleFonts.plusJakartaSans(
@@ -968,7 +1038,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                       style: GoogleFonts.plusJakartaSans(
                         fontWeight: FontWeight.w700,
                         fontSize: 16,
-                        color: ZyroTheme.darkCharcoal,
+                        color: ZyroTheme.textPrimary(context),
                       ),
                     ),
                     const SizedBox(height: 2),
@@ -977,14 +1047,14 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                       style: GoogleFonts.plusJakartaSans(
                         fontWeight: FontWeight.w600,
                         fontSize: 13,
-                        color: ZyroTheme.bodyText,
+                        color: ZyroTheme.textSecondary(context),
                       ),
                     ),
                     Text(
                       driver.phone,
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 12,
-                        color: ZyroTheme.mutedText,
+                        color: ZyroTheme.textSecondary(context),
                       ),
                     ),
                   ],
@@ -993,7 +1063,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
               Container(
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: ZyroTheme.primarySurface,
+                  color: ZyroTheme.primarySurfaceAdaptive(context),
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Column(
@@ -1003,7 +1073,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 10,
                         fontWeight: FontWeight.w700,
-                        color: ZyroTheme.mutedText,
+                        color: ZyroTheme.textSecondary(context),
                       ),
                     ),
                     Text(
@@ -1028,9 +1098,9 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: ZyroTheme.cardBg(context),
         borderRadius: BorderRadius.circular(20),
-        boxShadow: ZyroTheme.softCardShadow,
+        boxShadow: ZyroTheme.cardShadow(context),
         border: Border.all(color: const Color(0xFFFCA5A5)),
       ),
       child: Column(
@@ -1043,7 +1113,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
             style: GoogleFonts.plusJakartaSans(
               fontWeight: FontWeight.w700,
               fontSize: 18,
-              color: ZyroTheme.darkCharcoal,
+              color: ZyroTheme.textPrimary(context),
             ),
           ),
           const SizedBox(height: 6),
@@ -1052,7 +1122,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
             textAlign: TextAlign.center,
             style: GoogleFonts.plusJakartaSans(
               fontSize: 13,
-              color: ZyroTheme.bodyText,
+              color: ZyroTheme.textSecondary(context),
             ),
           ),
         ],
@@ -1064,10 +1134,10 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: ZyroTheme.cardBg(context),
         borderRadius: BorderRadius.circular(20),
-        boxShadow: ZyroTheme.softCardShadow,
-        border: Border.all(color: ZyroTheme.borderLight),
+        boxShadow: ZyroTheme.cardShadow(context),
+        border: Border.all(color: ZyroTheme.borderColor(context)),
       ),
       child: Column(
         children: [
@@ -1078,7 +1148,7 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
             style: GoogleFonts.plusJakartaSans(
               fontWeight: FontWeight.w700,
               fontSize: 18,
-              color: ZyroTheme.darkCharcoal,
+              color: ZyroTheme.textPrimary(context),
             ),
           ),
         ],
@@ -1091,14 +1161,12 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
       return Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          color: Colors.white,
-          border: const Border(top: BorderSide(color: ZyroTheme.borderLight)),
-          boxShadow: ZyroTheme.softCardShadow,
+          color: ZyroTheme.cardBg(context),
+          border: Border(top: BorderSide(color: ZyroTheme.borderColor(context))),
+          boxShadow: ZyroTheme.cardShadow(context),
         ),
         child: OutlinedButton(
-          onPressed: () {
-            _allocationService.cancelRide();
-          },
+          onPressed: _isCancelling ? null : _handleCancelRide,
           style: OutlinedButton.styleFrom(
             foregroundColor: ZyroTheme.errorRed,
             side: const BorderSide(color: ZyroTheme.errorRed),
@@ -1107,14 +1175,37 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
               borderRadius: BorderRadius.circular(14),
             ),
           ),
-          child: Text(
-            'Cancel Ride Request',
-            style: GoogleFonts.plusJakartaSans(
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-              color: ZyroTheme.errorRed,
-            ),
-          ),
+          child: _isCancelling
+              ? Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        valueColor: AlwaysStoppedAnimation<Color>(ZyroTheme.errorRed),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Text(
+                      'Cancelling Ride...',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: ZyroTheme.errorRed,
+                      ),
+                    ),
+                  ],
+                )
+              : Text(
+                  'Cancel Ride Request',
+                  style: GoogleFonts.plusJakartaSans(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                    color: ZyroTheme.errorRed,
+                  ),
+                ),
         ),
       );
     }
@@ -1122,9 +1213,9 @@ class _RideMatchingScreenState extends State<RideMatchingScreen>
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        border: const Border(top: BorderSide(color: ZyroTheme.borderLight)),
-        boxShadow: ZyroTheme.softCardShadow,
+        color: ZyroTheme.cardBg(context),
+        border: Border(top: BorderSide(color: ZyroTheme.borderColor(context))),
+        boxShadow: ZyroTheme.cardShadow(context),
       ),
       child: ZyroButton(
         text: 'Back to Home',

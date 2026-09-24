@@ -805,8 +805,9 @@ class _ZyroMapState extends State<ZyroMap> with TickerProviderStateMixin {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(
-                    color: Colors.white,
+                    color: ZyroTheme.cardBg(context),
                     borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: ZyroTheme.borderColor(context)),
                     boxShadow: [
                       BoxShadow(
                         color: Colors.black.withValues(alpha: 0.1),
@@ -832,7 +833,7 @@ class _ZyroMapState extends State<ZyroMap> with TickerProviderStateMixin {
                         style: GoogleFonts.plusJakartaSans(
                           fontSize: 11.5,
                           fontWeight: FontWeight.w700,
-                          color: ZyroTheme.darkCharcoal,
+                          color: ZyroTheme.textPrimary(context),
                         ),
                       ),
                     ],
@@ -849,12 +850,14 @@ class _ZyroMapState extends State<ZyroMap> with TickerProviderStateMixin {
                 children: [
                   if (widget.showZoomControls) ...[
                     _buildFloatingButton(
+                      context: context,
                       icon: Icons.add_rounded,
                       onTap: _zoomIn,
                       tooltip: 'Zoom In',
                     ),
                     const SizedBox(height: 6),
                     _buildFloatingButton(
+                      context: context,
                       icon: Icons.remove_rounded,
                       onTap: _zoomOut,
                       tooltip: 'Zoom Out',
@@ -863,6 +866,7 @@ class _ZyroMapState extends State<ZyroMap> with TickerProviderStateMixin {
                   ],
                   if (widget.showRecenterButton && _status == LocationServiceStatus.ready)
                     _buildFloatingButton(
+                      context: context,
                       icon: Icons.my_location_rounded,
                       onTap: _recenterOnUser,
                       tooltip: 'Recenter on Real GPS',
@@ -891,11 +895,14 @@ class _ZyroMapState extends State<ZyroMap> with TickerProviderStateMixin {
   }
 
   Widget _buildFloatingButton({
+    required BuildContext context,
     required IconData icon,
     required VoidCallback onTap,
     String? tooltip,
-    Color iconColor = ZyroTheme.darkCharcoal,
+    Color? iconColor,
   }) {
+    final effectiveIconColor = iconColor ?? ZyroTheme.textPrimary(context);
+
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -905,9 +912,9 @@ class _ZyroMapState extends State<ZyroMap> with TickerProviderStateMixin {
           width: 36,
           height: 36,
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: ZyroTheme.cardBg(context),
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: ZyroTheme.borderLight),
+            border: Border.all(color: ZyroTheme.borderColor(context)),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withValues(alpha: 0.12),
@@ -919,7 +926,7 @@ class _ZyroMapState extends State<ZyroMap> with TickerProviderStateMixin {
           child: Center(
             child: Icon(
               icon,
-              color: iconColor,
+              color: effectiveIconColor,
               size: 18,
             ),
           ),

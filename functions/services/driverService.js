@@ -16,24 +16,27 @@ class DriverService {
    * 2. isAvailable === true
    * 3. vehicleType matches requested rideType
    * 4. valid latitude and longitude
-   * 5. Distance <= maxRadiusKm
+   * 5. Distance <= maxRadiusKm (Strictly 2.0 KM for ZYRO dispatch)
    *
    * @param {Object} params
    * @param {number} params.pickupLatitude
    * @param {number} params.pickupLongitude
    * @param {string} params.rideType
-   * @param {number} [params.maxRadiusKm=10]
+   * @param {number} [params.maxRadiusKm=2.0]
    * @returns {Promise<Array<Object>>} Array of eligible driver objects with distanceKm
    */
   async findEligibleDrivers({
     pickupLatitude,
     pickupLongitude,
     rideType,
-    maxRadiusKm = 10,
+    maxRadiusKm = 2.0,
   }) {
     if (
       typeof pickupLatitude !== 'number' ||
-      typeof pickupLongitude !== 'number'
+      typeof pickupLongitude !== 'number' ||
+      isNaN(pickupLatitude) ||
+      isNaN(pickupLongitude) ||
+      (pickupLatitude === 0 && pickupLongitude === 0)
     ) {
       return [];
     }
@@ -53,7 +56,13 @@ class DriverService {
       const driverLat = typeof data.latitude === 'number' ? data.latitude : null;
       const driverLng = typeof data.longitude === 'number' ? data.longitude : null;
 
-      if (driverLat === null || driverLng === null) {
+      if (
+        driverLat === null ||
+        driverLng === null ||
+        isNaN(driverLat) ||
+        isNaN(driverLng) ||
+        (driverLat === 0 && driverLng === 0)
+      ) {
         return;
       }
 
@@ -68,7 +77,7 @@ class DriverService {
         eligibleDrivers.push({
           id: doc.id,
           ...data,
-          distanceKm,
+          distanceKm: parseFloat(distanceKm.toFixed(3)),
         });
       }
     });

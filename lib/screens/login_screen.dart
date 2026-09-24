@@ -309,7 +309,7 @@ class _LoginScreenState extends State<LoginScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: ZyroTheme.backgroundLight,
+      backgroundColor: ZyroTheme.scaffoldBg(context),
       body: LayoutBuilder(
         builder: (context, constraints) {
           final isWideScreen = constraints.maxWidth >= 768;

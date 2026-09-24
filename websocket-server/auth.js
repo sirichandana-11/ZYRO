@@ -77,13 +77,14 @@ async function verifyAuthToken(token) {
       role: role === 'driver' ? 'driver' : 'rider',
     };
   } catch (authErr) {
-    // 2. Fallback for offline local unit tests / mock development tokens
-    if (token.startsWith('mock_token_') || token.startsWith('demo_token_')) {
+    // 2. Fallback for offline local unit tests / mock development tokens (DISABLED IN PRODUCTION)
+    const isProd = process.env.NODE_ENV === 'production' || process.env.APP_ENV === 'production';
+    if (!isProd && (token.startsWith('mock_token_') || token.startsWith('demo_token_'))) {
       const raw = token.replace('mock_token_', '').replace('demo_token_', '');
       const parts = raw.split(':');
       const uid = parts[0] || 'test_user';
       const role = parts[1] || (uid.includes('driver') ? 'driver' : 'rider');
-      console.log(`[Auth] Mock token accepted for local development: uid=${uid}, role=${role}`);
+      console.log(`[Auth] [DEV ONLY] Mock token accepted for local development: uid=${uid}, role=${role}`);
       return {
         uid,
         email: `${uid}@zyro.app`,

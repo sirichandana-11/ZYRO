@@ -39,7 +39,7 @@ A candidate driver is deemed eligible **only** when ALL of the following criteri
 2. **Online Status**: `isOnline === true`.
 3. **Availability Status**: `isAvailable === true` (not currently engaged in another trip).
 4. **Vehicle Type Match**: `driver.vehicleType.toLowerCase() === requestedRideType.toLowerCase()`.
-5. **Geospatial Proximity**: Exact Haversine distance from pickup location $\le \text{MATCHING\_RADIUS\_KM}$ (configurable, default 10 km).
+5. **Geospatial Proximity**: Exact Haversine distance from pickup location $\le \text{MATCHING\_RADIUS\_KM}$ (strictly enforced at **2.0 KM** for initial broadcast).
 6. **Valid GPS Telemetry**: Real, non-zero latitude $[-90, 90]$, longitude $[-180, 180]$, non-NaN, non-Infinity.
 7. **Telemetry Freshness**: Telemetry timestamp must be within `maxLocationAgeSeconds` (default 30 seconds). Stale drivers are excluded from dispatch.
 8. **Account Standing**: Not blocked or suspended.

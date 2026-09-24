@@ -200,7 +200,16 @@ wss.on('connection', (ws, req) => {
           break;
         }
 
-        // 7. Ping / Heartbeat
+        // 7. Ride Cancelled Notification
+        case 'ride_cancelled': {
+          const rideId = payload.rideId;
+          if (rideId) {
+            rideEventManager.notifyRideCancelled(rideId, payload);
+          }
+          break;
+        }
+
+        // 8. Ping / Heartbeat
         case 'ping': {
           connectionManager.send(ws, {
             type: 'pong',
@@ -210,7 +219,7 @@ wss.on('connection', (ws, req) => {
           break;
         }
 
-        // 8. Pong from client
+        // 9. Pong from client
         case 'pong': {
           connectionInfo.isAlive = true;
           break;

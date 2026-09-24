@@ -27,7 +27,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   final DriverService _driverService = DriverService();
   final LocationService _locationService = LocationService();
   final RideService _rideService = RideService();
-  final RoutingService _routingService = OsrmRoutingService();
+  final RoutingService _routingService = RoutingService.instance;
   final WebSocketService _webSocketService = WebSocketService.instance;
 
   late String _authenticatedDriverId;
@@ -54,6 +54,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   StreamSubscription<DriverModel?>? _driverSubscription;
   StreamSubscription<List<RideModel>>? _rideRequestsSubscription;
   StreamSubscription<RideModel?>? _activeRideSubscription;
+  StreamSubscription<Map<String, dynamic>>? _wsRideCancelledSubscription;
   Timer? _tickerTimer;
 
   DriverModel? _currentDriver;
@@ -99,6 +100,20 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
     setState(() {
       _isRoleChecking = false;
       _isAuthorizedDriver = true;
+    });
+
+    _wsRideCancelledSubscription = _webSocketService.onRideCancelled.listen((event) {
+      if (!mounted) return;
+      final rideId = event['rideId'] as String?;
+      if (rideId != null) {
+        setState(() {
+          _incomingRequests.removeWhere((r) => r.id == rideId);
+          if (_activeRide?.id == rideId) {
+            _activeRide = null;
+            _activeRideRoutePoints = null;
+          }
+        });
+      }
     });
 
     _subscribeToDriver();
@@ -669,6 +684,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
     _driverSubscription?.cancel();
     _rideRequestsSubscription?.cancel();
     _activeRideSubscription?.cancel();
+    _wsRideCancelledSubscription?.cancel();
     _tickerTimer?.cancel();
     super.dispose();
   }
@@ -687,9 +703,9 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   @override
   Widget build(BuildContext context) {
     if (_isRoleChecking) {
-      return const Scaffold(
-        backgroundColor: ZyroTheme.backgroundLight,
-        body: Center(
+      return Scaffold(
+        backgroundColor: ZyroTheme.scaffoldBg(context),
+        body: const Center(
           child: CircularProgressIndicator(
             valueColor: AlwaysStoppedAnimation<Color>(ZyroTheme.primaryColor),
           ),
@@ -699,7 +715,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
 
     if (!_isAuthorizedDriver) {
       return Scaffold(
-        backgroundColor: ZyroTheme.backgroundLight,
+        backgroundColor: ZyroTheme.scaffoldBg(context),
         body: Center(
           child: Padding(
             padding: const EdgeInsets.all(24),
@@ -724,7 +740,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 20,
                     fontWeight: FontWeight.w800,
-                    color: ZyroTheme.darkCharcoal,
+                    color: ZyroTheme.textPrimary(context),
                   ),
                 ),
                 const SizedBox(height: 8),
@@ -733,7 +749,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                   textAlign: TextAlign.center,
                   style: GoogleFonts.plusJakartaSans(
                     fontSize: 13.5,
-                    color: ZyroTheme.bodyText,
+                    color: ZyroTheme.textSecondary(context),
                     height: 1.4,
                   ),
                 ),
@@ -766,9 +782,9 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
     final activeRideId = _currentDriver?.activeRideId;
 
     return Scaffold(
-      backgroundColor: ZyroTheme.backgroundLight,
+      backgroundColor: ZyroTheme.scaffoldBg(context),
       appBar: AppBar(
-        backgroundColor: Colors.white,
+        backgroundColor: ZyroTheme.cardBg(context),
         elevation: 0,
         centerTitle: false,
         title: Column(
@@ -779,7 +795,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
               style: GoogleFonts.plusJakartaSans(
                 fontWeight: FontWeight.w800,
                 fontSize: 18,
-                color: ZyroTheme.darkCharcoal,
+                color: ZyroTheme.textPrimary(context),
               ),
             ),
             Text(
@@ -839,6 +855,10 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
 
               // Live Real GPS Telemetry Card
               _buildGpsTelemetryCard(),
+              const SizedBox(height: 16),
+
+              // Live Real Driver Earnings & Stats Card
+              _buildDriverEarningsCard(),
               const SizedBox(height: 16),
 
               // Active Ride / Incoming Dispatch Status Card
@@ -1035,8 +1055,11 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: ZyroTheme.backgroundLight,
+                    color: ZyroTheme.isDarkMode(context)
+                        ? ZyroTheme.surfaceDarkElevated
+                        : ZyroTheme.backgroundLight,
                     borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: ZyroTheme.borderColor(context)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1057,7 +1080,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                         style: GoogleFonts.plusJakartaSans(
                           fontSize: 14,
                           fontWeight: FontWeight.w800,
-                          color: ZyroTheme.darkCharcoal,
+                          color: ZyroTheme.textPrimary(context),
                         ),
                       ),
                     ],
@@ -1069,8 +1092,11 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                 child: Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: ZyroTheme.backgroundLight,
+                    color: ZyroTheme.isDarkMode(context)
+                        ? ZyroTheme.surfaceDarkElevated
+                        : ZyroTheme.backgroundLight,
                     borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: ZyroTheme.borderColor(context)),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -1091,7 +1117,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                         style: GoogleFonts.plusJakartaSans(
                           fontSize: 14,
                           fontWeight: FontWeight.w800,
-                          color: ZyroTheme.darkCharcoal,
+                          color: ZyroTheme.textPrimary(context),
                         ),
                       ),
                     ],
@@ -1210,8 +1236,11 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: ZyroTheme.backgroundLight,
+                color: ZyroTheme.isDarkMode(context)
+                    ? ZyroTheme.surfaceDarkElevated
+                    : ZyroTheme.backgroundLight,
                 borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: ZyroTheme.borderColor(context)),
               ),
               child: Row(
                 children: [
@@ -1223,7 +1252,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                       'Turn Online to receive ride offers from nearby riders in real time.',
                       style: GoogleFonts.plusJakartaSans(
                         fontSize: 12,
-                        color: ZyroTheme.bodyText,
+                        color: ZyroTheme.textSecondary(context),
                       ),
                     ),
                   ),
@@ -1265,29 +1294,101 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                       color: ZyroTheme.darkCharcoal,
                     ),
                   ),
-                  const SizedBox(height: 10),
-                  ElevatedButton.icon(
-                    onPressed: () async {
-                      await _driverService.completeRide(
-                        driverId: _authenticatedDriverId,
-                      );
-                      if (mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Ride marked completed! Driver is now available.'),
-                          ),
-                        );
-                      }
-                    },
-                    icon: const Icon(Icons.done_all_rounded, size: 16),
-                    label: const Text('Complete Trip'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF16A34A),
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(8),
+                  if (_activeRide != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Fare: ₹${_activeRide!.fare.toStringAsFixed(0)} • Status: ${_activeRide!.status.toUpperCase()}',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: ZyroTheme.primaryColor,
                       ),
                     ),
+                  ],
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      if (_activeRide?.status == RideStatus.driverAssigned ||
+                          _activeRide?.status == RideStatus.driverArriving) ...[
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () async {
+                              if (activeRideId != null) {
+                                await _rideService.updateRideStatus(
+                                  rideId: activeRideId,
+                                  status: RideStatus.driverArrived,
+                                );
+                              }
+                            },
+                            icon: const Icon(Icons.pin_drop_rounded, size: 16),
+                            label: const Text('Arrived at Pickup'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: ZyroTheme.primaryColor,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ] else if (_activeRide?.status ==
+                          RideStatus.driverArrived) ...[
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () async {
+                              if (activeRideId != null) {
+                                await _rideService.updateRideStatus(
+                                  rideId: activeRideId,
+                                  status: RideStatus.rideStarted,
+                                );
+                              }
+                            },
+                            icon: const Icon(Icons.play_arrow_rounded, size: 16),
+                            label: const Text('Start Trip'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF2563EB),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ] else ...[
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed: () async {
+                              if (activeRideId != null) {
+                                await _rideService.updateRideStatus(
+                                  rideId: activeRideId,
+                                  status: RideStatus.completed,
+                                );
+                              }
+                              await _driverService.completeRide(
+                                driverId: _authenticatedDriverId,
+                              );
+                              if (mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                        'Ride marked completed! Driver is now available.'),
+                                  ),
+                                );
+                              }
+                            },
+                            icon: const Icon(Icons.done_all_rounded, size: 16),
+                            label: const Text('Complete Trip'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF16A34A),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ),
@@ -1640,6 +1741,166 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildDriverEarningsCard() {
+    return StreamBuilder<List<RideModel>>(
+      stream: _rideService.watchRidesForDriver(_authenticatedDriverId),
+      builder: (context, snapshot) {
+        final rides = snapshot.data ?? [];
+        final completedRides =
+            rides.where((r) => r.status == RideStatus.completed).toList();
+
+        // Calculate today's earnings
+        final now = DateTime.now();
+        final todayRides = completedRides.where((r) {
+          final completedAt = r.completedAt ?? r.requestedAt;
+          return completedAt != null &&
+              completedAt.year == now.year &&
+              completedAt.month == now.month &&
+              completedAt.day == now.day;
+        }).toList();
+
+        final todayEarnings =
+            todayRides.fold<double>(0.0, (sum, r) => sum + r.fare);
+        final totalEarnings =
+            completedRides.fold<double>(0.0, (sum, r) => sum + r.fare);
+
+        return Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            boxShadow: ZyroTheme.softCardShadow,
+            border: Border.all(color: ZyroTheme.borderLight),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.account_balance_wallet_rounded,
+                      size: 18, color: ZyroTheme.primaryColor),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Driver Earnings & Performance',
+                    style: GoogleFonts.plusJakartaSans(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                      color: ZyroTheme.darkCharcoal,
+                    ),
+                  ),
+                  const Spacer(),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFDCFCE7),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      'Live Cloud Data',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        color: const Color(0xFF15803D),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF0FDF4),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFBBF7D0)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "TODAY'S EARNINGS",
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: const Color(0xFF166534),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '₹${todayEarnings.toStringAsFixed(0)}',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: const Color(0xFF15803D),
+                            ),
+                          ),
+                          Text(
+                            '${todayRides.length} rides today',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                              color: const Color(0xFF16A34A),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: ZyroTheme.isDarkMode(context)
+                            ? ZyroTheme.surfaceDarkElevated
+                            : ZyroTheme.backgroundLight,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: ZyroTheme.borderColor(context)),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'ALL-TIME EARNINGS',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: ZyroTheme.mutedText,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '₹${totalEarnings.toStringAsFixed(0)}',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: ZyroTheme.textPrimary(context),
+                            ),
+                          ),
+                          Text(
+                            '${completedRides.length} total completed',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 11,
+                              color: ZyroTheme.mutedText,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 

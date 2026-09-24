@@ -235,13 +235,13 @@ class DemoRideAllocationService extends ChangeNotifier {
     }).toList();
   }
 
-  /// Filters nearby eligible drivers.
+  /// Filters nearby eligible drivers within strict 2.0 KM radius.
   List<DriverModel> findEligibleDrivers({
     required List<DriverModel> pool,
     required double pickupLat,
     required double pickupLng,
     required String rideType,
-    double maxRadiusKm = 10.0,
+    double maxRadiusKm = 2.0,
   }) {
     return pool.where((driver) {
       if (!driver.isOnline || !driver.isAvailable) return false;
@@ -381,30 +381,35 @@ class DemoRideAllocationService extends ChangeNotifier {
     notifyListeners();
 
     // 4. Synchronize ride document to Firestore so Driver Dashboard sees it in real time
-    _rideService.requestRide(
-      riderId: riderId,
-      pickupLatitude: pickupLatitude,
-      pickupLongitude: pickupLongitude,
-      destinationLatitude: destinationLatitude,
-      destinationLongitude: destinationLongitude,
-      rideType: rideType,
-      fare: fare,
-      pickupAddress: pickupAddress,
-      destinationAddress: destinationAddress,
-      backupDriverId: backupDriver?.id,
-      eligibleDriverIds: eligibleIds,
-      customRideId: rideId,
-    );
+    try {
+      _rideService.requestRide(
+        riderId: riderId,
+        pickupLatitude: pickupLatitude,
+        pickupLongitude: pickupLongitude,
+        destinationLatitude: destinationLatitude,
+        destinationLongitude: destinationLongitude,
+        rideType: rideType,
+        fare: fare,
+        pickupAddress: pickupAddress,
+        destinationAddress: destinationAddress,
+        backupDriverId: backupDriver?.id,
+        eligibleDriverIds: eligibleIds,
+        customRideId: rideId,
+      ).catchError((e) {
+        debugPrint('[DemoRideAllocationService] Firestore sync skipped: $e');
+        return rideId;
+      });
 
-    // 5. Listen to real-time updates on this ride document from Firestore
-    _firestoreRideSubscription = _rideService.watchRide(rideId).listen((firestoreRide) {
-      if (firestoreRide == null) return;
+      // 5. Listen to real-time updates on this ride document from Firestore
+      _firestoreRideSubscription =
+          _rideService.watchRide(rideId).listen((firestoreRide) {
+        if (firestoreRide == null) return;
 
-      if (firestoreRide.status == RideStatus.driverAssigned &&
-          firestoreRide.driverId != null &&
-          !_isLockAcquired) {
-        _isLockAcquired = true;
-        _cancelTimer();
+        if (firestoreRide.status == RideStatus.driverAssigned &&
+            firestoreRide.driverId != null &&
+            !_isLockAcquired) {
+          _isLockAcquired = true;
+          _cancelTimer();
 
         () async {
           DriverModel? fetchedDriver;
@@ -438,18 +443,22 @@ class DemoRideAllocationService extends ChangeNotifier {
 
           notifyListeners();
         }();
-      } else if (firestoreRide.status == RideStatus.noDriver && !_isLockAcquired) {
-        _isLockAcquired = true;
-        _cancelTimer();
-        _currentState = _currentState?.copyWith(
-          ride: firestoreRide,
-          remainingSeconds: 0,
-          assignmentReason: 'no_driver',
-          isCompleted: true,
-        );
-        notifyListeners();
-      }
-    });
+      } else if (firestoreRide.status == RideStatus.noDriver &&
+          !_isLockAcquired) {
+          _isLockAcquired = true;
+          _cancelTimer();
+          _currentState = _currentState?.copyWith(
+            ride: firestoreRide,
+            remainingSeconds: 0,
+            assignmentReason: 'no_driver',
+            isCompleted: true,
+          );
+          notifyListeners();
+        }
+      });
+    } catch (e) {
+      debugPrint('[DemoRideAllocationService] Firestore sync error: $e');
+    }
 
     if (eligible.isNotEmpty) {
       _startCountdown();
@@ -583,7 +592,11 @@ class DemoRideAllocationService extends ChangeNotifier {
     _isLockAcquired = true;
 
     if (_currentState != null) {
-      await _rideService.cancelRide(_currentState!.ride.id);
+      try {
+        await _rideService.cancelRide(_currentState!.ride.id);
+      } catch (e) {
+        debugPrint('[DemoRideAllocationService] Firestore cancel skipped: $e');
+      }
 
       final updatedRide = _currentState!.ride.copyWith(
         status: RideStatus.cancelled,

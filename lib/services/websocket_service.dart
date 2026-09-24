@@ -184,6 +184,7 @@ class WebSocketService {
   final _rideRequestController = StreamController<RideRequestEvent>.broadcast();
   final _rideAssignedController = StreamController<RideAssignedEvent>.broadcast();
   final _rideStatusController = StreamController<Map<String, dynamic>>.broadcast();
+  final _rideCancelledController = StreamController<Map<String, dynamic>>.broadcast();
 
   Stream<WebSocketConnectionStatus> get statusStream => _statusController.stream;
   Stream<Map<String, dynamic>> get rawEventStream => _rawEventController.stream;
@@ -191,6 +192,7 @@ class WebSocketService {
   Stream<RideRequestEvent> get onRideRequest => _rideRequestController.stream;
   Stream<RideAssignedEvent> get onRideAssigned => _rideAssignedController.stream;
   Stream<Map<String, dynamic>> get onRideStatusChanged => _rideStatusController.stream;
+  Stream<Map<String, dynamic>> get onRideCancelled => _rideCancelledController.stream;
 
   final Set<String> _activeSubscribedRides = {};
 
@@ -354,6 +356,19 @@ class WebSocketService {
     sendMessage('ride_assigned', payload);
   }
 
+  /// Emits ride cancelled notification over WebSocket.
+  void sendRideCancelled({
+    required String rideId,
+    String? reason,
+  }) {
+    final payload = <String, dynamic>{
+      'rideId': rideId,
+    };
+    if (reason != null) payload['reason'] = reason;
+
+    sendMessage('ride_cancelled', payload);
+  }
+
   /// Subscribes to real-time events for a specific ride.
   void subscribeRide(String rideId) {
     if (rideId.isEmpty) return;
@@ -407,6 +422,10 @@ class WebSocketService {
 
         case 'ride_assigned':
           _rideAssignedController.add(RideAssignedEvent.fromJson(payload));
+          break;
+
+        case 'ride_cancelled':
+          _rideCancelledController.add(payload);
           break;
 
         case 'ride_status_changed':

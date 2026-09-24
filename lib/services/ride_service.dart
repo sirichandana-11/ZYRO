@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
 import '../models/ride_model.dart';
+import './websocket_service.dart';
 
 /// Service responsible for managing ride documents and real-time updates in Firestore.
 class RideService {
@@ -11,10 +13,11 @@ class RideService {
     }
     return _instance;
   }
-  RideService._internal() : _firestore = FirebaseFirestore.instance;
-  RideService._withFirestore(this._firestore);
+  RideService._internal() : _customFirestore = null;
+  RideService._withFirestore(this._customFirestore);
 
-  final FirebaseFirestore _firestore;
+  final FirebaseFirestore? _customFirestore;
+  FirebaseFirestore get _firestore => _customFirestore ?? FirebaseFirestore.instance;
 
   CollectionReference<Map<String, dynamic>> get _ridesCollection =>
       _firestore.collection('rides');
@@ -302,11 +305,272 @@ class RideService {
     }
   }
 
-  /// Cancels an active ride in Firestore.
-  Future<void> cancelRide(String rideId) async {
+  /// Cancels an active ride in Firestore with atomic transaction and driver release.
+  ///
+  /// Race-Safe Invariant:
+  /// - If `status == searching`, atomically transitions to `cancelled`.
+  /// - If `status == driver_assigned` or `driver_arriving`, atomically transitions to `cancelled` and releases assigned driver.
+  /// - If already terminal, returns idempotent success without throwing.
+  Future<Map<String, dynamic>> cancelRideTransaction({
+    required String rideId,
+    String? riderId,
+    String? reason,
+  }) async {
+    if (rideId.isEmpty) {
+      return {'success': false, 'message': 'rideId is required'};
+    }
+
+    final rideRef = _ridesCollection.doc(rideId);
+
+    try {
+      final result = await _firestore.runTransaction((transaction) async {
+        final rideDoc = await transaction.get(rideRef);
+        if (!rideDoc.exists || rideDoc.data() == null) {
+          return {
+            'success': false,
+            'message': 'Ride document not found',
+            'status': 'not_found',
+          };
+        }
+
+        final rideData = rideDoc.data()!;
+        final currentStatus = rideData['status'] as String? ?? '';
+        final currentRiderId = rideData['riderId'] as String? ?? '';
+        final assignedDriverId = rideData['driverId'] as String?;
+
+        // Verify rider authorization if riderId provided
+        if (riderId != null && riderId.isNotEmpty && currentRiderId.isNotEmpty && currentRiderId != riderId) {
+          return {
+            'success': false,
+            'message': 'Unauthorized: authenticated rider does not own this ride',
+            'status': currentStatus,
+          };
+        }
+
+        // Idempotent handling if already cancelled
+        if (currentStatus == RideStatus.cancelled) {
+          return {
+            'success': true,
+            'status': RideStatus.cancelled,
+            'alreadyCancelled': true,
+          };
+        }
+
+        // Terminal states cannot be cancelled
+        if (currentStatus == RideStatus.completed || currentStatus == RideStatus.noDriver) {
+          return {
+            'success': false,
+            'status': currentStatus,
+            'message': 'Cannot cancel ride in terminal state $currentStatus',
+          };
+        }
+
+        // Active on-trip state
+        if (currentStatus == RideStatus.rideStarted) {
+          return {
+            'success': false,
+            'status': currentStatus,
+            'message': 'Ride is already in progress and cannot be cancelled directly.',
+          };
+        }
+
+        final updateData = <String, dynamic>{
+          'status': RideStatus.cancelled,
+          'cancelledAt': FieldValue.serverTimestamp(),
+          if (reason != null && reason.isNotEmpty) 'cancelReason': reason,
+        };
+
+        transaction.update(rideRef, updateData);
+
+        // If driver was assigned, atomically release the driver
+        if ((currentStatus == RideStatus.driverAssigned || currentStatus == RideStatus.driverArriving) &&
+            assignedDriverId != null &&
+            assignedDriverId.isNotEmpty) {
+          final driverRef = _firestore.collection('drivers').doc(assignedDriverId);
+          transaction.update(driverRef, {
+            'isAvailable': true,
+            'activeRideId': null,
+          });
+        }
+
+        return {
+          'success': true,
+          'status': RideStatus.cancelled,
+          'previousStatus': currentStatus,
+          'releasedDriverId': assignedDriverId,
+        };
+      });
+
+      // Broadcast WebSocket notification to clear driver requests and alert subscribers
+      try {
+        WebSocketService.instance.sendRideCancelled(
+          rideId: rideId,
+          reason: reason ?? 'Rider cancelled request',
+        );
+      } catch (wsErr) {
+        debugPrint('[RideService] WS cancel notification warning: $wsErr');
+      }
+
+      return result;
+    } catch (e) {
+      debugPrint('[RideService] cancelRideTransaction error: $e');
+      return {
+        'success': false,
+        'message': 'Failed to cancel ride: ${e.toString()}',
+      };
+    }
+  }
+
+  /// Cancels an active ride in Firestore (convenience wrapper around cancelRideTransaction).
+  Future<void> cancelRide(String rideId, {String? riderId, String? reason}) async {
+    await cancelRideTransaction(rideId: rideId, riderId: riderId, reason: reason);
+  }
+
+  /// Updates ride status (e.g. driver_arriving -> driver_arrived -> ride_started -> completed).
+  Future<void> updateRideStatus({
+    required String rideId,
+    required String status,
+    String? driverId,
+  }) async {
     if (rideId.isEmpty) return;
-    await _ridesCollection.doc(rideId).update({
-      'status': RideStatus.cancelled,
+
+    final updateData = <String, dynamic>{
+      'status': status,
+    };
+
+    final now = FieldValue.serverTimestamp();
+    if (status == RideStatus.driverArriving) {
+      updateData['arrivingAt'] = now;
+    } else if (status == RideStatus.driverArrived) {
+      updateData['arrivedAt'] = now;
+    } else if (status == RideStatus.rideStarted) {
+      updateData['startedAt'] = now;
+    } else if (status == RideStatus.completed) {
+      updateData['completedAt'] = now;
+    }
+
+    await _ridesCollection.doc(rideId).update(updateData);
+
+    // If completed, update driver state
+    if (status == RideStatus.completed && driverId != null && driverId.isNotEmpty) {
+      await _firestore.collection('drivers').doc(driverId).update({
+        'isAvailable': true,
+        'activeRideId': null,
+        'lastRideCompletedAt': FieldValue.serverTimestamp(),
+        'completedRidesCount': FieldValue.increment(1),
+      });
+    }
+  }
+
+  /// Listens to ride history for a specific rider (real Firestore stream).
+  Stream<List<RideModel>> watchRidesForRider(String riderId, {int limit = 30}) {
+    if (riderId.isEmpty) return Stream.value([]);
+
+    return _ridesCollection
+        .where('riderId', isEqualTo: riderId)
+        .limit(limit)
+        .snapshots()
+        .map((snapshot) {
+      final rides = snapshot.docs.map((doc) => RideModel.fromFirestore(doc)).toList();
+      // Sort client-side by requestedAt descending to avoid mandatory Firestore composite index requirement
+      rides.sort((a, b) {
+        final timeA = a.requestedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final timeB = b.requestedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return timeB.compareTo(timeA);
+      });
+      return rides;
     });
+  }
+
+  /// Listens to ride history for a specific driver.
+  Stream<List<RideModel>> watchRidesForDriver(String driverId, {int limit = 30}) {
+    if (driverId.isEmpty) return Stream.value([]);
+
+    return _ridesCollection
+        .where('driverId', isEqualTo: driverId)
+        .limit(limit)
+        .snapshots()
+        .map((snapshot) {
+      final rides = snapshot.docs.map((doc) => RideModel.fromFirestore(doc)).toList();
+      rides.sort((a, b) {
+        final timeA = a.requestedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        final timeB = b.requestedAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+        return timeB.compareTo(timeA);
+      });
+      return rides;
+    });
+  }
+
+  /// Rates a completed ride and atomically updates the driver's aggregate rating.
+  Future<bool> rateRide({
+    required String rideId,
+    required String riderId,
+    String? driverId,
+    required int rating,
+    String? feedback,
+  }) async {
+    if (rideId.isEmpty || rating < 1 || rating > 5) {
+      return false;
+    }
+
+    final rideRef = _ridesCollection.doc(rideId);
+    final ratingRef = _firestore.collection('ratings').doc('${rideId}_$riderId');
+
+    try {
+      await _firestore.runTransaction((transaction) async {
+        final rideDoc = await transaction.get(rideRef);
+
+        if (!rideDoc.exists) throw Exception('Ride not found');
+
+        final rideData = rideDoc.data()!;
+        if (rideData['rating'] != null) {
+          throw Exception('Ride already rated');
+        }
+
+        final targetDriverId = (driverId != null && driverId.isNotEmpty)
+            ? driverId
+            : (rideData['driverId'] as String? ?? '');
+
+        // 1. Record rating in ratings collection
+        transaction.set(ratingRef, {
+          'rideId': rideId,
+          'riderId': riderId,
+          'driverId': targetDriverId,
+          'rating': rating,
+          'feedback': feedback?.trim() ?? '',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+
+        // 2. Update ride document with rating
+        transaction.update(rideRef, {
+          'rating': rating,
+          'ratingFeedback': feedback?.trim() ?? '',
+        });
+
+        // 3. Atomically update driver aggregate rating if driver exists
+        if (targetDriverId.isNotEmpty) {
+          final driverRef = _firestore.collection('drivers').doc(targetDriverId);
+          final driverDoc = await transaction.get(driverRef);
+          if (driverDoc.exists && driverDoc.data() != null) {
+            final driverData = driverDoc.data()!;
+            final currentSum = (driverData['ratingSum'] as num?)?.toDouble() ?? 0.0;
+            final currentCount = (driverData['ratingCount'] as num?)?.toInt() ?? 0;
+
+            final newSum = currentSum + rating;
+            final newCount = currentCount + 1;
+            final newAvg = newCount > 0 ? (newSum / newCount) : 5.0;
+
+            transaction.update(driverRef, {
+              'ratingSum': newSum,
+              'ratingCount': newCount,
+              'averageRating': double.parse(newAvg.toStringAsFixed(2)),
+            });
+          }
+        }
+      });
+      return true;
+    } catch (e) {
+      return false;
+    }
   }
 }

@@ -4,6 +4,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import '../models/coordinate.dart';
 
 /// Represents a geographic location returned by the geocoding service.
 class GeocodingLocation {
@@ -52,7 +53,7 @@ class GeocodingLocation {
   }
 }
 
-/// Abstract geocoding service.
+/// Abstract geocoding service interface.
 abstract class GeocodingService {
   Future<List<GeocodingLocation>> search(
     String query, {
@@ -66,9 +67,12 @@ abstract class GeocodingService {
   );
 
   String get attribution;
+
+  /// Default production geocoding service backed by OpenStreetMap Nominatim.
+  static GeocodingService get instance => NominatimGeocodingService();
 }
 
-/// Nominatim / OpenStreetMap implementation.
+/// Production Nominatim / OpenStreetMap Geocoding Implementation.
 class NominatimGeocodingService implements GeocodingService {
   static final NominatimGeocodingService _instance =
       NominatimGeocodingService._internal();
@@ -94,7 +98,7 @@ class NominatimGeocodingService implements GeocodingService {
   String get attribution =>
       '© OpenStreetMap contributors, Nominatim';
 
-  /// Ensures requests are not sent too quickly.
+  /// Ensures requests adhere to Nominatim rate limits.
   Future<void> _throttle() async {
     final now = DateTime.now();
 
@@ -111,12 +115,6 @@ class NominatimGeocodingService implements GeocodingService {
     _lastRequestTime = DateTime.now();
   }
 
-  /// Creates a cache key using both the search text and
-  /// the pickup/proximity location.
-  ///
-  /// This is important because searching "Denkada" from
-  /// different pickup locations should not reuse an old
-  /// result blindly.
   String _buildSearchCacheKey(
     String query,
     double? proximityLat,
@@ -129,7 +127,6 @@ class NominatimGeocodingService implements GeocodingService {
     ].join('|');
   }
 
-  /// Calculates approximate distance between two coordinates.
   double _distanceKm(
     double lat1,
     double lon1,
@@ -201,16 +198,10 @@ class NominatimGeocodingService implements GeocodingService {
         'q': cleanQuery,
         'format': 'jsonv2',
         'addressdetails': '1',
-
-        // Give the user several choices.
         'limit': '8',
-
-        // Ask Nominatim for important/relevant results.
         'dedupe': '1',
       };
 
-      // If pickup coordinates are available, use them
-      // to bias search results toward the pickup area.
       if (proximityLat != null &&
           proximityLng != null) {
         const delta = 0.5;
@@ -221,8 +212,6 @@ class NominatimGeocodingService implements GeocodingService {
             '${proximityLng + delta},'
             '${proximityLat - delta}';
 
-        // Keep bounded=0 so valid locations outside
-        // the box are not completely removed.
         uriParams['bounded'] = '0';
       }
 
@@ -260,66 +249,43 @@ class NominatimGeocodingService implements GeocodingService {
         return [];
       }
 
-      final results = decoded
-          .whereType<Map<String, dynamic>>()
-          .map(
-            GeocodingLocation.fromJson,
-          )
-          .where(
-            (location) =>
-                location.latitude != 0.0 &&
-                location.longitude != 0.0 &&
-                location.latitude >= -90 &&
-                location.latitude <= 90 &&
-                location.longitude >= -180 &&
-                location.longitude <= 180,
-          )
-          .toList();
+      final results = <GeocodingLocation>[];
 
-      // If we know the pickup location, put nearby
-      // matching results first.
+      for (final item in decoded) {
+        if (item is Map<String, dynamic>) {
+          final location =
+              GeocodingLocation.fromJson(item);
+
+          // Validate coordinates: reject (0,0), NaN, out-of-bounds
+          if (Coordinate.isValid(
+            location.latitude,
+            location.longitude,
+          )) {
+            results.add(location);
+          }
+        }
+      }
+
       if (proximityLat != null &&
-          proximityLng != null) {
+          proximityLng != null &&
+          results.length > 1) {
         results.sort((a, b) {
-          final distanceA = _distanceKm(
+          final distA = _distanceKm(
             proximityLat,
             proximityLng,
             a.latitude,
             a.longitude,
           );
 
-          final distanceB = _distanceKm(
+          final distB = _distanceKm(
             proximityLat,
             proximityLng,
             b.latitude,
             b.longitude,
           );
 
-          return distanceA.compareTo(distanceB);
+          return distA.compareTo(distB);
         });
-      }
-
-      // Debug information is extremely useful while
-      // testing ZYRO's location selection.
-      for (final result in results) {
-        final distanceText =
-            proximityLat != null &&
-                    proximityLng != null
-                ? '${_distanceKm(
-                    proximityLat,
-                    proximityLng,
-                    result.latitude,
-                    result.longitude,
-                  ).toStringAsFixed(2)} km from pickup'
-                : 'no proximity';
-
-        debugPrint(
-          'ZYRO LOCATION RESULT: '
-          '${result.displayName} | '
-          'lat=${result.latitude} | '
-          'lon=${result.longitude} | '
-          '$distanceText',
-        );
       }
 
       _searchCache[cacheKey] = results;
@@ -339,15 +305,7 @@ class NominatimGeocodingService implements GeocodingService {
     double latitude,
     double longitude,
   ) async {
-    if (latitude == 0.0 &&
-        longitude == 0.0) {
-      return null;
-    }
-
-    if (latitude < -90 ||
-        latitude > 90 ||
-        longitude < -180 ||
-        longitude > 180) {
+    if (!Coordinate.isValid(latitude, longitude)) {
       return null;
     }
 

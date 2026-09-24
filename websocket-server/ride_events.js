@@ -191,6 +191,36 @@ class RideEventManager {
 
     return this.connectionManager.sendToRideSubscribers(rideId, message);
   }
+
+  /**
+   * Emits a ride_cancelled event to all subscribers of the ride and offered drivers.
+   */
+  notifyRideCancelled(rideId, cancelData = {}) {
+    const meta = this.rideMetadataCache.get(rideId) || {};
+    meta.status = 'cancelled';
+    this.setRideMetadata(rideId, meta);
+
+    const message = {
+      type: 'ride_cancelled',
+      timestamp: Date.now(),
+      payload: {
+        rideId,
+        reason: cancelData.reason || 'Rider cancelled request',
+      },
+    };
+
+    // 1. Notify ride subscribers (e.g. rider, assigned driver)
+    this.connectionManager.sendToRideSubscribers(rideId, message);
+
+    // 2. Also notify candidate drivers who were offered the ride
+    if (Array.isArray(meta.eligibleDriverIds)) {
+      for (const driverId of meta.eligibleDriverIds) {
+        this.connectionManager.sendToUser(driverId, message);
+      }
+    }
+
+    return true;
+  }
 }
 
 module.exports = RideEventManager;

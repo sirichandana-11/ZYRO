@@ -5,6 +5,7 @@ class RideStatus {
   static const String searching = 'searching';
   static const String driverAssigned = 'driver_assigned';
   static const String driverArriving = 'driver_arriving';
+  static const String driverArrived = 'driver_arrived';
   static const String rideStarted = 'ride_started';
   static const String completed = 'completed';
   static const String cancelled = 'cancelled';
@@ -14,6 +15,7 @@ class RideStatus {
     searching,
     driverAssigned,
     driverArriving,
+    driverArrived,
     rideStarted,
     completed,
     cancelled,
@@ -35,11 +37,18 @@ class RideModel {
   final String? destinationAddress;
   final String rideType;
   final double fare;
+  final double? distanceKm;
+  final int? etaSeconds;
   final String status;
   final List<String> eligibleDriverIds;
   final DateTime? requestedAt;
   final DateTime? expiresAt;
   final DateTime? assignedAt;
+  final DateTime? startedAt;
+  final DateTime? completedAt;
+  final DateTime? cancelledAt;
+  final int? rating;
+  final String? ratingFeedback;
 
   const RideModel({
     required this.id,
@@ -54,11 +63,18 @@ class RideModel {
     this.destinationAddress,
     required this.rideType,
     required this.fare,
+    this.distanceKm,
+    this.etaSeconds,
     this.status = RideStatus.searching,
     this.eligibleDriverIds = const [],
     this.requestedAt,
     this.expiresAt,
     this.assignedAt,
+    this.startedAt,
+    this.completedAt,
+    this.cancelledAt,
+    this.rating,
+    this.ratingFeedback,
   });
 
   /// Creates a [RideModel] from a Map and an optional document ID.
@@ -91,11 +107,18 @@ class RideModel {
       destinationAddress: map['destinationAddress'] as String?,
       rideType: map['rideType'] as String? ?? '',
       fare: (map['fare'] as num?)?.toDouble() ?? 0.0,
+      distanceKm: (map['distanceKm'] as num?)?.toDouble(),
+      etaSeconds: (map['etaSeconds'] as num?)?.toInt(),
       status: map['status'] as String? ?? RideStatus.searching,
       eligibleDriverIds: parsedEligible,
       requestedAt: parseDateTime(map['requestedAt']),
       expiresAt: parseDateTime(map['expiresAt']),
       assignedAt: parseDateTime(map['assignedAt']),
+      startedAt: parseDateTime(map['startedAt']),
+      completedAt: parseDateTime(map['completedAt']),
+      cancelledAt: parseDateTime(map['cancelledAt']),
+      rating: (map['rating'] as num?)?.toInt(),
+      ratingFeedback: map['ratingFeedback'] as String?,
     );
   }
 
@@ -120,11 +143,18 @@ class RideModel {
       if (destinationAddress != null) 'destinationAddress': destinationAddress,
       'rideType': rideType,
       'fare': fare,
+      if (distanceKm != null) 'distanceKm': distanceKm,
+      if (etaSeconds != null) 'etaSeconds': etaSeconds,
       'status': status,
       'eligibleDriverIds': eligibleDriverIds,
       'requestedAt': requestedAt != null ? Timestamp.fromDate(requestedAt!) : null,
       'expiresAt': expiresAt != null ? Timestamp.fromDate(expiresAt!) : null,
       'assignedAt': assignedAt != null ? Timestamp.fromDate(assignedAt!) : null,
+      'startedAt': startedAt != null ? Timestamp.fromDate(startedAt!) : null,
+      'completedAt': completedAt != null ? Timestamp.fromDate(completedAt!) : null,
+      'cancelledAt': cancelledAt != null ? Timestamp.fromDate(cancelledAt!) : null,
+      if (rating != null) 'rating': rating,
+      if (ratingFeedback != null) 'ratingFeedback': ratingFeedback,
     };
   }
 
@@ -142,11 +172,18 @@ class RideModel {
     String? destinationAddress,
     String? rideType,
     double? fare,
+    double? distanceKm,
+    int? etaSeconds,
     String? status,
     List<String>? eligibleDriverIds,
     DateTime? requestedAt,
     DateTime? expiresAt,
     DateTime? assignedAt,
+    DateTime? startedAt,
+    DateTime? completedAt,
+    DateTime? cancelledAt,
+    int? rating,
+    String? ratingFeedback,
   }) {
     return RideModel(
       id: id ?? this.id,
@@ -161,11 +198,25 @@ class RideModel {
       destinationAddress: destinationAddress ?? this.destinationAddress,
       rideType: rideType ?? this.rideType,
       fare: fare ?? this.fare,
+      distanceKm: distanceKm ?? this.distanceKm,
+      etaSeconds: etaSeconds ?? this.etaSeconds,
       status: status ?? this.status,
       eligibleDriverIds: eligibleDriverIds ?? this.eligibleDriverIds,
       requestedAt: requestedAt ?? this.requestedAt,
       expiresAt: expiresAt ?? this.expiresAt,
       assignedAt: assignedAt ?? this.assignedAt,
+      startedAt: startedAt ?? this.startedAt,
+      completedAt: completedAt ?? this.completedAt,
+      cancelledAt: cancelledAt ?? this.cancelledAt,
+      rating: rating ?? this.rating,
+      ratingFeedback: ratingFeedback ?? this.ratingFeedback,
     );
+  }
+
+  /// Checks if the ride allocation window has expired based on authoritative [expiresAt].
+  bool isExpired({DateTime? at}) {
+    if (expiresAt == null) return false;
+    final checkTime = at ?? DateTime.now();
+    return checkTime.isAfter(expiresAt!) || checkTime.isAtSameMomentAs(expiresAt!);
   }
 }
