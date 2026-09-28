@@ -22,6 +22,7 @@ class _LoginScreenState extends State<LoginScreen>
   final _passwordController = TextEditingController();
   final _authService = AuthService();
 
+  String _selectedRole = 'rider'; // 'rider' | 'driver'
   bool _isLoading = false;
   bool _isGoogleLoading = false;
 
@@ -103,8 +104,9 @@ class _LoginScreenState extends State<LoginScreen>
       await _authService.signInWithEmailPassword(
         email: _emailController.text,
         password: _passwordController.text,
+        expectedRole: _selectedRole,
       );
-      // AuthGate stream listener will automatically switch to HomeScreen
+      // AuthGate stream listener will automatically switch to correct Home
     } catch (errorMessage) {
       _showErrorSnackBar(errorMessage.toString());
     } finally {
@@ -124,12 +126,14 @@ class _LoginScreenState extends State<LoginScreen>
     });
 
     try {
-      final credential = await _authService.signInWithGoogle();
+      final credential = await _authService.signInWithGoogle(
+        expectedRole: _selectedRole,
+      );
       if (credential == null) {
         // User closed or canceled the popup
         return;
       }
-      // AuthGate stream listener will automatically switch to HomeScreen
+      // AuthGate stream listener will automatically switch to correct Home
     } catch (errorMessage) {
       _showErrorSnackBar(errorMessage.toString());
     } finally {
@@ -448,7 +452,7 @@ class _LoginScreenState extends State<LoginScreen>
           ),
           const SizedBox(height: 4),
           Text(
-            'Enter your credentials to access your rides and rewards.',
+            'Select your account type and enter credentials.',
             style: GoogleFonts.plusJakartaSans(
               fontSize: 13,
               fontWeight: FontWeight.w400,
@@ -456,11 +460,137 @@ class _LoginScreenState extends State<LoginScreen>
             ),
           ),
 
-          const SizedBox(height: 22),
+          const SizedBox(height: 18),
+
+          // Role Selection Tabs: Rider / Driver
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: ZyroTheme.isDarkMode(context)
+                  ? ZyroTheme.surfaceDarkElevated
+                  : ZyroTheme.backgroundLight,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: ZyroTheme.borderColor(context)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _selectedRole = 'rider';
+                      });
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      decoration: BoxDecoration(
+                        color: _selectedRole == 'rider'
+                            ? Colors.white
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(10),
+                        boxShadow: _selectedRole == 'rider'
+                            ? [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.06),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ]
+                            : null,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.person_rounded,
+                            size: 18,
+                            color: _selectedRole == 'rider'
+                                ? ZyroTheme.primaryColor
+                                : ZyroTheme.mutedText,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Rider',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13.5,
+                              fontWeight: _selectedRole == 'rider'
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                              color: _selectedRole == 'rider'
+                                  ? ZyroTheme.primaryColor
+                                  : ZyroTheme.mutedText,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _selectedRole = 'driver';
+                      });
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      padding: const EdgeInsets.symmetric(vertical: 10),
+                      decoration: BoxDecoration(
+                        color: _selectedRole == 'driver'
+                            ? Colors.white
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(10),
+                        boxShadow: _selectedRole == 'driver'
+                            ? [
+                                BoxShadow(
+                                  color: Colors.black.withValues(alpha: 0.06),
+                                  blurRadius: 8,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ]
+                            : null,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.electric_scooter_rounded,
+                            size: 18,
+                            color: _selectedRole == 'driver'
+                                ? ZyroTheme.primaryColor
+                                : ZyroTheme.mutedText,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Driver',
+                            style: GoogleFonts.plusJakartaSans(
+                              fontSize: 13.5,
+                              fontWeight: _selectedRole == 'driver'
+                                  ? FontWeight.w700
+                                  : FontWeight.w500,
+                              color: _selectedRole == 'driver'
+                                  ? ZyroTheme.primaryColor
+                                  : ZyroTheme.mutedText,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 18),
 
           // Google Button
           GoogleButton(
-            text: 'Continue with Google',
+            text: _selectedRole == 'driver'
+                ? 'Continue with Google (Driver)'
+                : 'Continue with Google (Rider)',
             isLoading: _isGoogleLoading,
             onPressed: _handleGoogleLogin,
           ),

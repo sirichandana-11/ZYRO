@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart' show kIsWeb, debugPrint;
 import 'package:google_sign_in/google_sign_in.dart';
 
@@ -30,36 +31,136 @@ class AuthService {
   /// Check if user is currently logged in
   bool get isAuthenticated => _auth.currentUser != null;
 
-  /// Fetches authoritative user role from Firestore (`users/{uid}`)
-  Future<String> getUserRole(String uid) async {
-    if (uid.isEmpty) return 'rider';
-    try {
-      final userDoc = await _firestore.collection('users').doc(uid).get();
-      if (userDoc.exists && userDoc.data() != null) {
-        final role = userDoc.data()!['role'] as String?;
-        if (role != null && role.isNotEmpty) {
-          return role.toLowerCase();
+  /// Real-time stream of the authoritative user role from Firestore (`users/{uid}`)
+  /// Returns "rider", "driver", or null if the user doc/role is missing.
+  Stream<String?> watchUserRole(String uid) {
+    if (uid.isEmpty) return Stream.value(null);
+
+    debugPrint('[ROLE] watchUserRole UID: $uid');
+    debugPrint('[ROLE] Firestore path: users/$uid');
+
+    // Diagnosis one-time get()
+    _firestore.collection('users').doc(uid).get().then((doc) {
+      debugPrint('[ROLE GET] exists: ${doc.exists}');
+      debugPrint('[ROLE GET] data: ${doc.data()}');
+    }).catchError((e, stackTrace) {
+      debugPrint('[ROLE GET ERROR] $e');
+      debugPrint('[ROLE GET STACK] $stackTrace');
+    });
+
+    return _firestore.collection('users').doc(uid).snapshots().map((snapshot) {
+      debugPrint('[ROLE] Firestore snapshot received');
+      debugPrint('[ROLE] exists: ${snapshot.exists}');
+      debugPrint('[ROLE] data: ${snapshot.data()}');
+
+      if (snapshot.exists && snapshot.data() != null) {
+        final data = snapshot.data()!;
+        final rawRole = data['role'] as String?;
+        if (rawRole != null && rawRole.trim().isNotEmpty) {
+          final normalized = rawRole.trim().toLowerCase();
+          if (normalized == 'driver') {
+            debugPrint('[AUTH] Role verification successful: driver');
+            return 'driver';
+          } else if (normalized == 'rider') {
+            debugPrint('[AUTH] Role verification successful: rider');
+            return 'rider';
+          }
+          return normalized;
         }
       }
 
-      // Check if driver profile exists directly in drivers collection
-      final driverDoc = await _firestore.collection('drivers').doc(uid).get();
-      if (driverDoc.exists) {
-        // Backfill role in users collection
-        await _firestore.collection('users').doc(uid).set({
-          'id': uid,
-          'role': 'driver',
-          'email': currentUser?.email ?? '',
-          'name': currentUser?.displayName ?? 'Driver',
-        }, SetOptions(merge: true));
-        return 'driver';
-      }
+      debugPrint('[AUTH] Role: null (users/$uid not found or role empty)');
+      return null;
+    });
+  }
 
-      // Default fallback for new riders
-      return 'rider';
+  /// Fetches authoritative user role from Firestore (`users/{uid}`)
+  /// Returns "rider", "driver", or null if the user doc/role is missing.
+  Future<String?> getUserRole(String uid) async {
+    if (uid.isEmpty) return null;
+    debugPrint('[AUTH] Reading users/$uid');
+    try {
+      final userDoc = await _firestore.collection('users').doc(uid).get();
+
+      debugPrint('[AUTH] Firestore document exists: ${userDoc.exists}');
+      if (userDoc.exists && userDoc.data() != null) {
+        final data = userDoc.data()!;
+        debugPrint('[AUTH] Firestore data: $data');
+        final rawRole = data['role'] as String?;
+        debugPrint('[AUTH] Role: $rawRole');
+        if (rawRole != null && rawRole.trim().isNotEmpty) {
+          return rawRole.trim().toLowerCase();
+        }
+      }
+      return null;
+    } on FirebaseException catch (e, stackTrace) {
+      debugPrint('[AUTH ERROR] FirebaseException in getUserRole for users/$uid: [${e.code}] ${e.message}');
+      debugPrint('[AUTH ERROR] ${e.runtimeType}');
+      debugPrint('[AUTH ERROR] Stack trace: $stackTrace');
+      rethrow;
+    } catch (e, stackTrace) {
+      debugPrint('[AUTH ERROR] Unexpected error in getUserRole for users/$uid: $e');
+      debugPrint('[AUTH ERROR] ${e.runtimeType}');
+      debugPrint('[AUTH ERROR] Stack trace: $stackTrace');
+      rethrow;
+    }
+  }
+
+  /// Sets or completes the authoritative user role in Firestore (`users/{uid}`)
+  /// SECURITY: Role is immutable. If a role is already assigned, this method
+  /// will throw an error instead of overwriting.
+  Future<void> setUserRole(String uid, String role) async {
+    if (uid.isEmpty) return;
+    final sanitizedRole = role.toLowerCase().trim() == 'driver' ? 'driver' : 'rider';
+
+    // SECURITY CHECK: Reject if user already has a role assigned
+    try {
+      final existingDoc = await _firestore.collection('users').doc(uid).get();
+      if (existingDoc.exists && existingDoc.data() != null) {
+        final existingRole = existingDoc.data()!['role'] as String?;
+        if (existingRole != null && existingRole.trim().isNotEmpty) {
+          final normalizedExisting = existingRole.trim().toLowerCase();
+          if (normalizedExisting != sanitizedRole) {
+            throw 'This account is already registered as a ${normalizedExisting == 'driver' ? 'Driver' : 'Rider'}. Role cannot be changed.';
+          }
+          debugPrint('[AUTH] setUserRole: role already set to $normalizedExisting, no change needed.');
+          return;
+        }
+      }
     } catch (e) {
-      debugPrint('Error fetching user role for $uid: $e');
-      return 'rider';
+      if (e is String) rethrow;
+      debugPrint('[AUTH ERROR] setUserRole check error: $e');
+      throw 'Unable to verify account status. Please check your connection and try again.';
+    }
+
+    await _firestore.collection('users').doc(uid).set({
+      'id': uid,
+      'role': sanitizedRole,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+
+    if (sanitizedRole == 'driver') {
+      try {
+        final driverDoc = await _firestore.collection('drivers').doc(uid).get();
+        if (!driverDoc.exists) {
+          final subUid = uid.length >= 4 ? uid.substring(0, 4).toUpperCase() : uid.toUpperCase();
+          await _firestore.collection('drivers').doc(uid).set({
+            'id': uid,
+            'name': currentUser?.displayName ?? 'ZYRO Driver',
+            'phone': '',
+            'vehicleType': 'bike',
+            'vehicleNumber': 'ZYRO-$subUid',
+            'isOnline': false,
+            'isAvailable': false,
+            'latitude': 0.0,
+            'longitude': 0.0,
+            'lastRideCompletedAt': null,
+            'activeRideId': null,
+          }, SetOptions(merge: true));
+        }
+      } catch (e) {
+        debugPrint('[AUTH ERROR] Error provisioning driver record: $e');
+      }
     }
   }
 
@@ -250,7 +351,9 @@ class AuthService {
     }, SetOptions(merge: true));
   }
 
-  /// Sign Up with Email and Password with role provisioning
+  /// Sign Up with Email and Password with role provisioning.
+  /// Creates the Firestore users/{uid} document with the role immediately.
+  /// After signup, AuthGate routes directly to the correct dashboard.
   Future<UserCredential> signUpWithEmailPassword({
     required String email,
     required String password,
@@ -260,85 +363,186 @@ class AuthService {
     String? vehicleType,
     String? vehicleNumber,
   }) async {
+    final sanitizedRole = role.toLowerCase().trim() == 'driver' ? 'driver' : 'rider';
+    debugPrint('[AUTH] Signup started');
+    debugPrint('[AUTH] Email: ${email.trim()}');
+    debugPrint('[AUTH] Full Name: ${fullName.trim()}');
+    debugPrint('[AUTH] Selected role: $sanitizedRole');
+
     try {
       final credential = await _auth.createUserWithEmailAndPassword(
         email: email.trim(),
         password: password,
       );
 
-      final uid = credential.user?.uid;
-
-      // Update Firebase User Profile with Display Name
-      if (credential.user != null) {
-        await credential.user!.updateDisplayName(fullName.trim());
-        await credential.user!.reload();
+      final user = _auth.currentUser;
+      if (user == null) {
+        throw Exception('User is null after signup');
       }
 
-      if (uid != null) {
-        final sanitizedRole = role.toLowerCase() == 'driver' ? 'driver' : 'rider';
+      debugPrint('[FIREBASE] PROJECT: ${Firebase.app().options.projectId}');
+      debugPrint('[FIRESTORE] START WRITE');
+      debugPrint('[FIRESTORE] UID: ${user.uid}');
+      debugPrint('[FIRESTORE] ROLE: $sanitizedRole');
 
-        // 1. Authoritative user role record
-        await _firestore.collection('users').doc(uid).set({
-          'id': uid,
+      final profileData = sanitizedRole == 'driver'
+          ? <String, dynamic>{
+              'email': user.email,
+              'name': fullName.trim(),
+              'role': 'driver',
+              'createdAt': FieldValue.serverTimestamp(),
+            }
+          : <String, dynamic>{
+              'email': user.email,
+              'name': fullName.trim(),
+              'role': 'rider',
+              'createdAt': FieldValue.serverTimestamp(),
+            };
+
+      await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .set(profileData);
+
+      debugPrint('[FIRESTORE] WRITE SUCCESS');
+
+      if (sanitizedRole == 'driver') {
+        final subUid = user.uid.length >= 4 ? user.uid.substring(0, 4).toUpperCase() : user.uid.toUpperCase();
+        await _firestore.collection('drivers').doc(user.uid).set({
+          'id': user.uid,
           'name': fullName.trim(),
-          'email': email.trim(),
-          'role': sanitizedRole,
           'phone': phone?.trim() ?? '',
           'vehicleType': vehicleType?.trim().toLowerCase() ?? 'bike',
-          'vehicleNumber': vehicleNumber?.trim().toUpperCase() ?? '',
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
+          'vehicleNumber': vehicleNumber?.trim().toUpperCase() ?? 'ZYRO-$subUid',
+          'isOnline': false,
+          'isAvailable': false,
+          'latitude': 0.0,
+          'longitude': 0.0,
+          'lastRideCompletedAt': null,
+          'activeRideId': null,
         }, SetOptions(merge: true));
-
-        // 2. If Driver: provision official drivers/{uid} profile
-        if (sanitizedRole == 'driver') {
-          await _firestore.collection('drivers').doc(uid).set({
-            'id': uid,
-            'name': fullName.trim(),
-            'phone': phone?.trim() ?? '',
-            'vehicleType': vehicleType?.trim().toLowerCase() ?? 'bike',
-            'vehicleNumber': vehicleNumber?.trim().toUpperCase() ?? 'ZYRO-${uid.substring(0, 4).toUpperCase()}',
-            'isOnline': false,
-            'isAvailable': false,
-            'latitude': 0.0,
-            'longitude': 0.0,
-            'lastRideCompletedAt': null,
-            'activeRideId': null,
-          }, SetOptions(merge: true));
-        }
       }
 
+      // Immediate verification
+      final doc = await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .get();
+
+      debugPrint('[FIRESTORE] EXISTS: ${doc.exists}');
+      debugPrint('[FIRESTORE] DATA: ${doc.data()}');
+
+      if (!doc.exists) {
+        throw Exception('Firestore profile creation failed: users/${user.uid} was not found.');
+      }
+
+      final storedRole = doc.data()?['role'] as String?;
+      if (storedRole == null || storedRole.isEmpty) {
+        throw Exception('Firestore profile creation failed: role is missing in users/${user.uid}.');
+      }
+
+      debugPrint('[AUTH] Role verification successful');
+      debugPrint('[AUTH] Navigating to ${sanitizedRole == 'driver' ? 'Driver Dashboard' : 'Rider Dashboard'}');
+
       return credential;
-    } on FirebaseAuthException catch (e) {
-      debugPrint('ZYRO Auth: signUpWithEmailPassword FirebaseAuthException [${e.code}]');
+    } on FirebaseAuthException catch (e, stackTrace) {
+      debugPrint('[AUTH ERROR] signUpWithEmailPassword FirebaseAuthException [${e.code}]: ${e.message}');
+      debugPrint('[AUTH ERROR] Stack trace: $stackTrace');
       throw getReadableAuthError(e);
-    } catch (e) {
-      debugPrint('ZYRO Auth: signUpWithEmailPassword Error: $e');
-      throw 'Sign up failed: ${e.toString()}';
+    } on FirebaseException catch (e, stackTrace) {
+      debugPrint('[AUTH ERROR] signUpWithEmailPassword FirebaseException [${e.code}]: ${e.message}');
+      debugPrint('[AUTH ERROR] Stack trace: $stackTrace');
+      throw 'Firestore Error [${e.code}]: ${e.message ?? e.toString()}';
+    } catch (e, stackTrace) {
+      debugPrint('[AUTH ERROR] signUpWithEmailPassword Error: $e');
+      debugPrint('[AUTH ERROR] Stack trace: $stackTrace');
+      rethrow;
     }
   }
 
-  /// Sign In with Email and Password
+  /// Sign In with Email and Password with authoritative role validation
   Future<UserCredential> signInWithEmailPassword({
     required String email,
     required String password,
+    String? expectedRole,
   }) async {
+    final selectedRole = expectedRole?.toLowerCase().trim();
+    debugPrint('[AUTH] Login started');
+    debugPrint('[AUTH] Email: ${email.trim()}');
+    debugPrint('[AUTH] Selected role: $selectedRole');
+
     try {
-      return await _auth.signInWithEmailAndPassword(
+      final credential = await _auth.signInWithEmailAndPassword(
         email: email.trim(),
         password: password,
       );
-    } on FirebaseAuthException catch (e) {
-      debugPrint('ZYRO Auth: signInWithEmailPassword FirebaseAuthException [${e.code}]');
+
+      final user = credential.user;
+      if (user == null) {
+        throw 'Firebase Authentication succeeded but user is null.';
+      }
+
+      final uid = user.uid;
+      debugPrint('[AUTH] Firebase authentication successful');
+      debugPrint('[AUTH] UID: $uid');
+
+      final storedRole = await getUserRole(uid);
+      final normalizedStored = storedRole?.toLowerCase().trim();
+
+      debugPrint('[AUTH] Stored role: $normalizedStored');
+      debugPrint('[AUTH] Selected role: $selectedRole');
+
+      if (normalizedStored != null && normalizedStored.isNotEmpty) {
+        if (selectedRole != null && selectedRole.isNotEmpty) {
+          if (normalizedStored != selectedRole) {
+            debugPrint('[AUTH] Role mismatch: stored=$normalizedStored vs selected=$selectedRole. Signing out.');
+            await signOut();
+
+            if (normalizedStored == 'rider') {
+              throw 'This email is registered as a Rider account. Please use Rider login.';
+            } else if (normalizedStored == 'driver') {
+              throw 'This email is registered as a Driver account. Please use Driver login.';
+            } else {
+              throw 'This account has an incompatible role ($normalizedStored).';
+            }
+          }
+        }
+        debugPrint('[AUTH] Role verification successful');
+        debugPrint('[AUTH] Navigating to ${normalizedStored == 'driver' ? 'Driver Dashboard' : 'Rider Dashboard'}');
+      } else {
+        debugPrint('[AUTH] No Firestore role found for UID $uid. Signing out.');
+        await signOut();
+        throw 'User profile is missing. Please create a new account.';
+      }
+
+      return credential;
+    } on FirebaseAuthException catch (e, stackTrace) {
+      debugPrint('[AUTH ERROR] signInWithEmailPassword FirebaseAuthException [${e.code}]: ${e.message}');
+      debugPrint('[AUTH ERROR] ${e.runtimeType}');
+      debugPrint('[AUTH ERROR] Stack trace: $stackTrace');
       throw getReadableAuthError(e);
-    } catch (e) {
-      debugPrint('ZYRO Auth: signInWithEmailPassword Error: $e');
-      throw 'Login failed: ${e.toString()}';
+    } on FirebaseException catch (e, stackTrace) {
+      debugPrint('[AUTH ERROR] signInWithEmailPassword FirebaseException [${e.code}]: ${e.message}');
+      debugPrint('[AUTH ERROR] ${e.runtimeType}');
+      debugPrint('[AUTH ERROR] Stack trace: $stackTrace');
+      if (e.code == 'permission-denied') {
+        throw 'Firestore permission denied. Please verify Firestore rules in Firebase Console.';
+      }
+      throw 'Database error (${e.code}): ${e.message ?? e.toString()}';
+    } catch (e, stackTrace) {
+      debugPrint('[AUTH ERROR] signInWithEmailPassword Error: $e');
+      debugPrint('[AUTH ERROR] ${e.runtimeType}');
+      debugPrint('[AUTH ERROR] Stack trace: $stackTrace');
+      rethrow;
     }
   }
 
-  /// Sign In / Sign Up with Google (Cross-Platform: Web Popup + Mobile Native)
-  Future<UserCredential?> signInWithGoogle() async {
+  /// Sign In / Sign Up with Google (Cross-Platform: Web Popup + Mobile Native) with role validation
+  Future<UserCredential?> signInWithGoogle({String? expectedRole}) async {
+    final selectedRole = expectedRole?.toLowerCase().trim();
+    debugPrint('[AUTH] Google sign-in started');
+    debugPrint('[AUTH] Selected role: $selectedRole');
+
     try {
       UserCredential userCredential;
 
@@ -346,7 +550,6 @@ class AuthService {
         debugPrint('[GoogleAuth] Platform: Web');
         debugPrint('[GoogleAuth] Using Firebase signInWithPopup');
 
-        // Web Platform: Strictly use Firebase Auth Popup (Zero google_sign_in_web dependency)
         final GoogleAuthProvider googleProvider = GoogleAuthProvider();
         googleProvider.addScope('email');
         googleProvider.addScope('profile');
@@ -357,11 +560,10 @@ class AuthService {
         debugPrint('[GoogleAuth] Platform: Native Mobile');
         debugPrint('[GoogleAuth] Using GoogleSignIn plugin');
 
-        // Mobile Platform (Android / iOS): Use native GoogleSignIn
         final GoogleSignInAccount? googleUser = await _googleSignIn.signIn();
 
         if (googleUser == null) {
-          // The user canceled the sign-in flow
+          debugPrint('[GoogleAuth] User cancelled Google Sign-In');
           return null;
         }
 
@@ -376,58 +578,68 @@ class AuthService {
         userCredential = await _auth.signInWithCredential(credential);
       }
 
-      // Provision or ensure user profile exists in Firestore
       final User? user = userCredential.user;
       if (user != null) {
-        await _ensureUserProfileExists(user);
+        debugPrint('[AUTH] Firebase authentication successful');
+        debugPrint('[AUTH] UID: ${user.uid}');
+
+        final storedRole = await getUserRole(user.uid);
+        final normalizedStored = storedRole?.toLowerCase().trim();
+
+        debugPrint('[AUTH] Stored role: $normalizedStored');
+        debugPrint('[AUTH] Selected role: $selectedRole');
+
+        if (normalizedStored != null && normalizedStored.isNotEmpty) {
+          if (selectedRole != null && selectedRole.isNotEmpty) {
+            if (normalizedStored != selectedRole) {
+              debugPrint('[AUTH] Role mismatch: stored=$normalizedStored vs selected=$selectedRole. Signing out.');
+              await signOut();
+              if (normalizedStored == 'rider') {
+                throw 'This email is registered as a Rider account. Please use Rider login.';
+              } else if (normalizedStored == 'driver') {
+                throw 'This email is registered as a Driver account. Please use Driver login.';
+              } else {
+                throw 'This account has an incompatible role ($normalizedStored).';
+              }
+            }
+          }
+          debugPrint('[AUTH] Role verification successful');
+          debugPrint('[AUTH] Navigating to ${normalizedStored == 'driver' ? 'Driver Dashboard' : 'Rider Dashboard'}');
+        } else {
+          debugPrint('[AUTH] No Firestore role found for Google user UID ${user.uid}. Signing out.');
+          await signOut();
+          throw 'User profile is missing. Please create a new account.';
+        }
       }
 
       return userCredential;
-    } on FirebaseAuthException catch (e) {
-      debugPrint('ZYRO Google Auth FirebaseAuthException [${e.code}]: ${e.message}');
+    } on FirebaseAuthException catch (e, stackTrace) {
+      debugPrint('[AUTH ERROR] Google Auth FirebaseAuthException [${e.code}]: ${e.message}');
+      debugPrint('[AUTH ERROR] ${e.runtimeType}');
+      debugPrint('[AUTH ERROR] Stack trace: $stackTrace');
       if (e.code == 'popup-closed-by-user' || e.code == 'cancelled-popup-request') {
-        // Silent cancellation when user intentionally closes the popup
         return null;
       }
       throw getReadableAuthError(e);
-    } catch (e) {
-      debugPrint('ZYRO Google Auth Error: $e');
+    } on FirebaseException catch (e, stackTrace) {
+      debugPrint('[AUTH ERROR] Google Auth FirebaseException [${e.code}]: ${e.message}');
+      debugPrint('[AUTH ERROR] ${e.runtimeType}');
+      debugPrint('[AUTH ERROR] Stack trace: $stackTrace');
+      if (e.code == 'permission-denied') {
+        throw 'Firestore permission denied. Please verify Firestore rules in Firebase Console.';
+      }
+      throw 'Database error (${e.code}): ${e.message ?? e.toString()}';
+    } catch (e, stackTrace) {
+      debugPrint('[AUTH ERROR] Google Auth Error: $e');
+      debugPrint('[AUTH ERROR] ${e.runtimeType}');
+      debugPrint('[AUTH ERROR] Stack trace: $stackTrace');
       final errorStr = e.toString().toLowerCase();
       if (errorStr.contains('popup_closed_by_user') ||
           errorStr.contains('canceled') ||
           errorStr.contains('cancelled')) {
         return null;
       }
-      throw 'Google Sign-In failed: ${e.toString()}';
-    }
-  }
-
-  /// Ensures user profile exists in Firestore without allowing unauthorized privilege escalation
-  Future<void> _ensureUserProfileExists(User user) async {
-    try {
-      final userDocRef = _firestore.collection('users').doc(user.uid);
-      final userDoc = await userDocRef.get();
-
-      if (!userDoc.exists || userDoc.data() == null) {
-        // Check if this UID is already registered as a driver in drivers collection
-        final driverDoc = await _firestore.collection('drivers').doc(user.uid).get();
-        final String assignedRole = driverDoc.exists ? 'driver' : 'rider';
-
-        await userDocRef.set({
-          'id': user.uid,
-          'name': (user.displayName != null && user.displayName!.trim().isNotEmpty)
-              ? user.displayName!.trim()
-              : 'ZYRO Rider',
-          'email': user.email ?? '',
-          'role': assignedRole,
-          'photoUrl': user.photoURL ?? '',
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-      }
-    } catch (e) {
-      debugPrint('Warning: Failed to provision user profile: $e');
-      // Do not block authentication if profile caching hits a non-fatal error
+      rethrow;
     }
   }
 
@@ -499,5 +711,3 @@ class AuthService {
     }
   }
 }
-
-

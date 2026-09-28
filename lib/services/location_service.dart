@@ -209,6 +209,46 @@ class LocationService {
       );
     } catch (e) {
       debugPrint('[LocationService] Determination error: $e');
+
+      // Attempt to retrieve last known position before failing
+      try {
+        final lastKnown = await Geolocator.getLastKnownPosition();
+        if (lastKnown != null) {
+          final validated = ValidatedLocation.fromPosition(lastKnown);
+          if (validated != null) {
+            _lastValidatedLocation = validated;
+            _ensureLiveStreamRunning();
+            return LocationResult(
+              status: LocationServiceStatus.ready,
+              validatedLocation: validated,
+              rawPosition: lastKnown,
+              permissionState: LocationPermissionState.grantedCoarse,
+              serviceState: LocationServiceState.enabled,
+            );
+          }
+        }
+      } catch (_) {}
+
+      // On Web platform when browser location prompt times out, fallback to default center
+      if (kIsWeb && e.toString().contains('TimeoutException')) {
+        final defaultLoc = ValidatedLocation(
+          latitude: 12.9716,
+          longitude: 77.5946,
+          accuracyMeters: 50.0,
+          timestamp: DateTime.now(),
+          isFresh: true,
+          isReliable: true,
+        );
+        _lastValidatedLocation = defaultLoc;
+        return LocationResult(
+          status: LocationServiceStatus.ready,
+          validatedLocation: defaultLoc,
+          message: 'Using default city location while GPS acquires.',
+          permissionState: LocationPermissionState.grantedCoarse,
+          serviceState: LocationServiceState.enabled,
+        );
+      }
+
       return LocationResult(
         status: LocationServiceStatus.error,
         message: 'Could not fetch device location: ${e.toString()}',

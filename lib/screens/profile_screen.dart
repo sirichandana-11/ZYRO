@@ -57,7 +57,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       final role = await _authService.getUserRole(_currentUser!.uid);
       if (mounted) {
         setState(() {
-          _userRole = role;
+          _userRole = role ?? 'rider';
           _isLoadingRole = false;
         });
       }
